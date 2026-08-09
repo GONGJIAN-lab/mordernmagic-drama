@@ -47,6 +47,10 @@ function errorHandler(err: any, _req: Request, res: Response, _next: NextFunctio
 
 // ===== CORS =====
 app.use(cors({ origin: FRONTEND_URL }));
+app.use((req, res, next) => {
+  res.data = (payload) => res.json({ data: payload });
+  next();
+});
 
 // ===== Stripe Webhook (MUST be before express.json()) =====
 app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res, next) => {
@@ -130,7 +134,7 @@ app.post('/api/auth/send-otp', async (req, res, next) => {
       </div>`,
     });
 
-    res.json({ success: true, message: 'OTP sent' });
+    res.data({ success: true, message: 'OTP sent' });
   } catch (err) {
     next(err);
   }
@@ -158,7 +162,7 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
     });
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, email: user.email } });
+    res.data({ token, user: { id: user.id, email: user.email } });
   } catch (err) {
     next(err);
   }
@@ -171,7 +175,7 @@ app.get('/api/dramas', async (_req, res, next) => {
       select: { slug: true, title: true, cover: true, totalEpisodes: true, priceCents: true },
       orderBy: { createdAt: 'desc' },
     });
-    res.json({ dramas });
+    res.data(dramas);
   } catch (err) {
     next(err);
   }
@@ -193,7 +197,7 @@ app.get('/api/dramas/:slug', async (req, res, next) => {
       res.status(404).json({ error: 'Drama not found' });
       return;
     }
-    res.json({ drama });
+    res.data(drama);
   } catch (err) {
     next(err);
   }
@@ -215,7 +219,28 @@ app.get('/api/dramas/:slug/episodes', async (req, res, next) => {
       select: { id: true, episodeNumber: true, s3Key: true, durationSec: true },
       orderBy: { episodeNumber: 'asc' },
     });
-    res.json({ episodes });
+    res.data(episodes);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/dramas/:slug/episodes/:epNumber/play-auth', async (req, res, next) => {
+  try {
+    const { slug, epNumber } = req.params;
+    const epNum = parseInt(epNumber, 10);
+    
+    // 从 DB 拿 episode 的 s3Key —— 按你后端实际 ORM 调整
+    const episode = await prisma.episode.findFirst({
+      where: { episodeNumber: epNum, drama: { slug } },
+      select: { s3Key: true, duration: true }
+    });
+    if (!episode) return res.status(404).json({ error: 'Episode not found' });
+    
+    // 生成 1h 有效的签名 URL —— 按你后端实际函数调整
+    const playUrl = await generateSignedUrl(episode.s3Key, 3600);
+    
+    res.data({ playUrl, expiresIn: 3600 });
   } catch (err) {
     next(err);
   }
@@ -264,7 +289,7 @@ app.post('/api/payment/create-checkout', requireAuth, async (req: AuthenticatedR
       },
     });
 
-    res.json({ sessionId: session.id, url: session.url });
+    res.data({ sessionId: session.id, url: session.url });
   } catch (err) {
     next(err);
   }
@@ -281,7 +306,7 @@ app.get('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, res
       },
       orderBy: { updatedAt: 'desc' },
     });
-    res.json({ history });
+    res.data(history);
   } catch (err) {
     next(err);
   }
@@ -313,7 +338,7 @@ app.post('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, re
       },
     });
 
-    res.json({ record });
+    res.data(record);
   } catch (err) {
     next(err);
   }
