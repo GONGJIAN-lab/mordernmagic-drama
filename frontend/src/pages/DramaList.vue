@@ -6,12 +6,12 @@
     </header>
     <van-loading v-if="loading" class="loading" />
     <div v-else class="grid">
-      <div v-for="d in dramas" :key="d.id" class="card" @click="$router.push(`/drama/${d.id}`)">
-        <div class="cover" :style="{ background: gradientFor(d.id) }">
-          <span class="ep-count">全 {{ d.totalEps }} 集</span>
+      <div v-for="d in dramas" :key="d.slug" class="card" @click="$router.push(`/drama/${d.slug}`)">
+        <div class="cover" :style="{ background: gradientFor(d.slug) }">
+          <span class="ep-count">全 {{ d.totalEpisodes }} 集</span>
         </div>
         <h3>{{ d.title }}</h3>
-        <p class="price">${{ d.pricePerEp }} / 集</p>
+        <p class="price">${{ (d.priceCents/100).toFixed(2) }} / 集</p>
       </div>
     </div>
   </div>
