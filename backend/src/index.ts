@@ -233,28 +233,6 @@ app.get('/api/dramas/:slug/episodes', async (req, res, next) => {
   }
 });
 
-app.post('/api/dramas/:slug/episodes/:epNumber/play-auth', async (req, res, next) => {
-  try {
-    const { slug, epNumber } = req.params;
-    const epNum = parseInt(epNumber, 10);
-    
-    // 从 DB 拿 episode 的 s3Key —— 按你后端实际 ORM 调整
-    const episode = await prisma.episode.findFirst({
-      where: { episodeNumber: epNum, drama: { slug } },
-      select: { s3Key: true, duration: true }
-    });
-    if (!episode) return res.status(404).json({ error: 'Episode not found' });
-    
-    // 生成 1h 有效的签名 URL —— 按你后端实际函数调整
-    const playUrl = await generateSignedUrl(episode.s3Key, 3600);
-    
-    res.data({ playUrl, expiresIn: 3600 });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// ===== Payment: Create Checkout =====
 app.post('/api/payment/create-checkout', requireAuth, async (req: AuthenticatedRequest, res, next) => {
   try {
     const { dramaSlug, email } = req.body;
