@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  createdAt     DateTime       @default(now())
+  otpCode       String?
+  otpExpiresAt  DateTime?
+  orders        Order[]
+  watchHistory  WatchHistory[]
+}
+
+model Drama {
+  id            String     @id @default(cuid())
+  slug          String     @unique
+  title         String
+  cover         String
+  description   String
+  totalEpisodes Int
+  priceCents    Int
+  createdAt     DateTime   @default(now())
+  episodes      Episode[]
+  orders        Order[]
+  watchHistory  WatchHistory[]
+}
+
+model Episode {
+  id            String         @id @default(cuid())
+  dramaId       String
+  episodeNumber Int
+  s3Key         String
+  durationSec   Int
+  createdAt     DateTime       @default(now())
+  drama         Drama          @relation(fields: [dramaId], references: [id])
+  watchHistory  WatchHistory[]
+
+  @@unique([dramaId, episodeNumber])
+}
+
+model Order {
+  id              String   @id @default(cuid())
+  userId          String
+  dramaId         String
+  stripeSessionId String   @unique
+  amountCents     Int
+  status          String   @default("pending")
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id])
+  drama           Drama    @relation(fields: [dramaId], references: [id])
+}
+
+model WatchHistory {
+  id          String   @id @default(cuid())
+  userId      String
+  dramaId     String
+  episodeId   String
+  positionSec Int      @default(0)
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
+  drama       Drama    @relation(fields: [dramaId], references: [id])
+  episode     Episode  @relation(fields: [episodeId], references: [id])
+
+  @@unique([userId, dramaId, episodeId])
+}
