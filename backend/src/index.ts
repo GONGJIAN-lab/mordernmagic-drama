@@ -1,4 +1,12 @@
 import express, { Request, Response, NextFunction } from 'express';
+declare global {
+  namespace Express {
+    interface Response {
+      data: (payload: any) => Response;
+    }
+  }
+}
+export {};
 import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
