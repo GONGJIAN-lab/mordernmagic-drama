@@ -1,7 +1,7 @@
 <template>
   <div class="drama-detail">
     <div v-if="drama" class="hero" :style="{ background: `linear-gradient(135deg, #1a365d, #e53e3e)` }">
-      <button class="back" @click="$router.back()">←</button>
+      <button class="back" @click="router.back()">←</button>
       <h1>{{ drama.title }}</h1>
       <p>{{ drama.description }}</p>
       <div class="meta">
@@ -23,10 +23,11 @@
 
 <script setup>
 import { ref, onMounted } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client.js";
 
 const route = useRoute();
+const router = useRouter();
 const drama = ref(null);
 
 onMounted(async () => {
@@ -37,7 +38,7 @@ onMounted(async () => {
 function play(epNumber) {
   // 第 1 集免费直接进 player，否则调 create-checkout
   // TODO Phase 2 集成
-  window.$router.push(`/drama/${route.params.id}/player/${epNumber}`);
+  router.push(`/drama/${route.params.id}/player/${epNumber}`);
 }
 </script>
 
