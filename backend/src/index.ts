@@ -13,6 +13,17 @@ import jwt from 'jsonwebtoken';
 import { Resend } from 'resend';
 import Stripe from 'stripe';
 import { PrismaClient } from '@prisma/client';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+
+const s3 = new S3Client({
+  region: process.env.AWS_REGION || 'us-east-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+  },
+});
+
 
 dotenv.config();
 
@@ -331,6 +342,25 @@ app.post('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, re
 });
 
 // ===== Error handler (must be last) =====
+app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
+  try {
+    const { slug, episodeNumber } = req.params;
+    const ep = await prisma.episode.findFirst({
+      where: { drama: { slug }, episodeNumber: Number(episodeNumber) },
+    });
+    if (!ep) return res.status(404).json({ error: 'episode not found' });
+
+    const cmd = new GetObjectCommand({
+      Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+      Key: ep.s3Key,
+    });
+    const playUrl = await getSignedUrl(s3, cmd, { expiresIn: 86400 });
+    res.data({ playUrl });
+  } catch (e: any) {
+    next(e);
+  }
+});
+
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
