@@ -15,7 +15,9 @@
         controls
         playsinline
         autoplay
+        muted
         @ended="onEnded"
+        @error="onVideoError"
         class="video"
       />
       <div class="info">
@@ -51,6 +53,7 @@ async function loadAuth() {
   try {
     const { data } = await api.post(`/dramas/${route.params.id}/episodes/${props.epNumber}/play-auth`);
     playUrl.value = data.data.playUrl;
+    console.log("playUrl length:", playUrl.value?.length);
   } catch (e) {
     if (e.response?.status === 402) locked.value = true;
     else window.$toast("加载失败");
@@ -72,6 +75,8 @@ async function unlock() {
   } catch (e) { window.$toast("创建支付失败"); }
   finally { paying.value = false; }
 }
+
+function onVideoError(e){console.error("Video error:",videoEl.value?.error);console.error("Video src:",videoEl.value?.src);window.$toast("视频错误: "+(videoEl.value?.error?.code||"unknown"))}
 
 function onEnded() {
   window.$toast("已看完本集");
