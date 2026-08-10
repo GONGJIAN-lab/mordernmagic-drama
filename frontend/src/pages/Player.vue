@@ -76,7 +76,16 @@ async function unlock() {
   finally { paying.value = false; }
 }
 
-function onVideoError(e){console.error("Video error:",videoEl.value?.error);console.error("Video src:",videoEl.value?.src);window.$toast("视频错误: "+(videoEl.value?.error?.code||"unknown"))}
+function onVideoError(){
+  var v = videoEl.value;
+  console.error("[onVideoError] called");
+  console.error("[onVideoError] videoEl:", v);
+  console.error("[onVideoError] video error obj:", v && v.error);
+  console.error("[onVideoError] video src:", v && v.src);
+  console.error("[onVideoError] video networkState:", v && v.networkState);
+  console.error("[onVideoError] video readyState:", v && v.readyState);
+  try { window.$toast && window.$toast("video err code=" + ((v && v.error && v.error.code) || "?")); } catch (_) {}
+}
 
 function onEnded() {
   window.$toast("已看完本集");
