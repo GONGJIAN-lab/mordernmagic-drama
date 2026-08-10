@@ -17,7 +17,6 @@
         autoplay
         muted
         @ended="onEnded"
-        @error="() => onVideoError()"
         class="video"
       />
       <div class="info">
@@ -44,6 +43,14 @@ const drama = ref(null);
 const videoEl = ref(null);
 
 onMounted(async () => {
+  // attach video error listener imperatively (绕 Vite minify)
+  if (videoEl.value) {
+    videoEl.value.addEventListener("error", onVideoError);
+    console.log("[player] onMounted: error listener attached, videoEl=", videoEl.value);
+  } else {
+    console.warn("[player] onMounted: videoEl is null, cannot attach error listener");
+  }
+
   const { data: detail } = await api.get(`/dramas/${route.params.id}`);
   drama.value = detail.data;
   await loadAuth();
