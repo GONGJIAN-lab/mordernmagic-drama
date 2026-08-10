@@ -65,7 +65,7 @@ function errorHandler(err: any, _req: Request, res: Response, _next: NextFunctio
 }
 
 // ===== CORS =====
-app.use(cors({ origin: '*' })  // ⚠️ 审核期临时通配, 上线前改回 FRONTEND_URL);
+app.use(cors({ origin: FRONTEND_URL }));
 app.use((req, res, next) => {
   res.data = (payload) => res.json({ data: payload });
   next();
