@@ -17,7 +17,7 @@
         autoplay
         muted
         @ended="onEnded"
-        @error="onVideoError"
+        @error="() => onVideoError()"
         class="video"
       />
       <div class="info">
