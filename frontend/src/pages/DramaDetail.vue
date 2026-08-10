@@ -12,9 +12,9 @@
     <div class="ep-list">
       <h2>选集</h2>
       <div class="grid">
-        <button v-for="ep in drama?.episodes" :key="ep.id" class="ep-btn" @click="play(ep.epNumber)">
-          第 {{ ep.epNumber }} 集
-          <small v-if="ep.durationSec">{{ ep.durationSec }}s</small>
+        <button v-for="ep in drama?.episodes" :key="ep.id" class="ep-btn" @click="play(ep)">
+          第 {{ (ep.epNumber ?? ep.episodeNumber ?? "?") }} 集
+          <small v-if="ep.durationSec ?? ep.duration">{{ ep.durationSec ?? ep.duration }}s</small>
         </button>
       </div>
     </div>
@@ -35,10 +35,12 @@ onMounted(async () => {
   drama.value = data.data;
 });
 
-function play(epNumber) {
+function play(ep) {
+  const n = ep.epNumber ?? ep.episodeNumber;
+  if (!n) { console.error("[play] episode missing number field", ep); return; }
   // 第 1 集免费直接进 player，否则调 create-checkout
   // TODO Phase 2 集成
-  router.push(`/drama/${route.params.id}/player/${epNumber}`);
+  router.push(`/drama/${route.params.id}/player/${n}`);
 }
 </script>
 

@@ -35,6 +35,9 @@ import { trackCompletePayment } from "../utils/tiktok-pixel.js";
 
 const props = defineProps({ epNumber: [String, Number] });
 const route = useRoute();
+const slug = route.params.id;
+const epNumber = route.params.epNumber;
+console.log("[player] mounted, slug=", slug, "epNumber=", epNumber);
 const router = useRouter();
 const playUrl = ref(null);
 const locked = ref(false);
