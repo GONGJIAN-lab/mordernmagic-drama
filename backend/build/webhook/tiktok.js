@@ -32,7 +32,7 @@ function createTikTokWebhookRouter(config) {
             return;
         }
         try {
-            console.log("[TikTokWebhook] === ALL HEADERS ==="); console.log(JSON.stringify(req.headers, null, 2)); console.log("[TikTokWebhook] === RAW BODY ==="); console.log(rawBody.toString("utf8").slice(0, 1000)); console.log("[TikTokWebhook] === END ==="); // (0, signature_1.verifyWebhookSignature)(rawBody, req.headers, config.signature);
+            (0, signature_1.verifyWebhookSignature)(rawBody, req.headers, config.signature);
         }
         catch (err) {
             if (err instanceof signature_1.WebhookSignatureError) {

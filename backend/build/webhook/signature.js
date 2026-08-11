@@ -31,7 +31,9 @@ function verifyWebhookSignature(rawBody, headers, config) {
         throw new WebhookSignatureError(`Missing signature header: ${headerName}`);
     }
     // 2. 时间戳防重放检查（如果 header 中有 timestamp）
-    if (checkTimestamp) {
+    // tiktok-minis 格式的时间戳在 signature header 中（t=...），单独处理
+    let tiktokMinisTimestamp;
+    if (checkTimestamp && algorithm !== 'tiktok-minis') {
         const timestampHeader = getHeaderCaseInsensitive(headers, 'x-tiktok-timestamp') || getHeaderCaseInsensitive(headers, 'timestamp');
         if (timestampHeader) {
             const ts = parseInt(String(timestampHeader), 10);
@@ -72,6 +74,78 @@ function verifyWebhookSignature(rawBody, headers, config) {
             hmac.update(payload);
             expected = hmac.digest('hex');
             break;
+        }
+        case 'tiktok-minis': {
+            // TikTok Minis 格式: t=<timestamp>,s=<signature>
+            const match = String(signatureHeader).match(/t=(\d+),s=([a-f0-9]+)/i);
+            if (!match) {
+                throw new WebhookSignatureError(`Invalid tiktok-signature format: ${signatureHeader}`);
+            }
+            const timestamp = match[1];
+            const actualSignature = match[2].toLowerCase();
+            tiktokMinisTimestamp = timestamp;
+            // 防重放检查
+            if (checkTimestamp) {
+                const ts = parseInt(timestamp, 10);
+                const now = Math.floor(Date.now() / 1000);
+                if (Math.abs(now - ts) > timestampTolerance) {
+                    throw new WebhookSignatureError(`Timestamp out of tolerance: ${ts} vs ${now}`);
+                }
+            }
+            // 尝试所有可能的签名算法组合（调试模式）
+            const bodyStr = rawBody.toString('utf8');
+            const attempts = [
+                {
+                    name: 'hmac-sha256(body)',
+                    expected: crypto_1.default.createHmac('sha256', secret).update(rawBody).digest('hex'),
+                },
+                {
+                    name: 'hmac-sha256(timestamp+body)',
+                    expected: crypto_1.default.createHmac('sha256', secret).update(timestamp + bodyStr).digest('hex'),
+                },
+                {
+                    name: 'hmac-sha256(timestamp+"."+body)',
+                    expected: crypto_1.default.createHmac('sha256', secret).update(timestamp + '.' + bodyStr).digest('hex'),
+                },
+                {
+                    name: 'hmac-sha256(timestamp+":"+body)',
+                    expected: crypto_1.default.createHmac('sha256', secret).update(timestamp + ':' + bodyStr).digest('hex'),
+                },
+                {
+                    name: 'hmac-sha256(timestamp+"|"+body)',
+                    expected: crypto_1.default.createHmac('sha256', secret).update(timestamp + '|' + bodyStr).digest('hex'),
+                },
+                {
+                    name: 'sha256(secret+body)',
+                    expected: crypto_1.default.createHash('sha256').update(secret + bodyStr).digest('hex'),
+                },
+                {
+                    name: 'sha256(body+secret)',
+                    expected: crypto_1.default.createHash('sha256').update(bodyStr + secret).digest('hex'),
+                },
+            ];
+            console.log('[SignatureDebug] tiktok-minis attempts:');
+            console.log(`  actual signature: ${actualSignature}`);
+            console.log(`  timestamp: ${timestamp}`);
+            console.log(`  body length: ${bodyStr.length}`);
+            let matchedAny = false;
+            for (const a of attempts) {
+                const matched = a.expected === actualSignature;
+                console.log(`  ${a.name}: ${a.expected.substring(0, 20)}... matched=${matched}`);
+                if (matched) {
+                    expected = a.expected;
+                    matchedAny = true;
+                    break;
+                }
+            }
+            if (!matchedAny) {
+                // 没有匹配的，抛错但把最接近的信息带出来
+                throw new WebhookSignatureError(`Signature verification failed. ` +
+                    `Timestamp=${timestamp}, bodyLength=${bodyStr.length}, ` +
+                    `firstAttempt=${attempts[0].expected.substring(0, 20)}...`);
+            }
+            // tiktok-minis 在 case 内部已完成验证，直接返回
+            return true;
         }
         default:
             throw new WebhookSignatureError(`Unsupported algorithm: ${algorithm}`);
