@@ -4,7 +4,7 @@
   "description": "MORDERN MAGIC short drama platform backend",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "start": "prisma migrate deploy && node dist/index.js",
     "dev": "ts-node src/index.ts",
     "db:generate": "prisma generate",
