@@ -128,8 +128,8 @@ app.use(
     signature: {
       secret: process.env.TIKTOK_WEBHOOK_SECRET || '',
       clientKey: process.env.TIKTOK_CLIENT_KEY || '',
-      headerName: 'authorization',
-      algorithm: 'tiktok-shop',
+      headerName: 'tiktok-signature',
+      algorithm: 'tiktok-minis',
       checkTimestamp: true,
       timestampTolerance: 300,
     },
