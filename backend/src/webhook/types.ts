@@ -84,7 +84,7 @@ export interface SignatureConfig {
   /** 签名 header 名称，默认 X-TikTok-Signature */
   headerName?: string;
   /** 签名算法：hmac-sha256 | hmac-sha256-hex | raw-body-hmac-sha256 */
-  algorithm?: 'tiktok-shop' | 'hmac-sha256' | 'hmac-sha256-hex' | 'raw-body-hmac-sha256';
+  algorithm?: 'tiktok-shop' | 'hmac-sha256' | 'hmac-sha256-hex' | 'raw-body-hmac-sha256' | 'tiktok-minis';
   /** 是否校验时间戳防重放（默认 true） */
   checkTimestamp?: boolean;
   /** 时间戳容忍范围（秒，默认 300 = 5分钟） */
