@@ -1,0 +1,1 @@
+{"version":3,"file":"prisma-adapter.d.ts","sourceRoot":"","sources":["../../src/webhook/prisma-adapter.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAEH,OAAO,EAAE,YAAY,EAAE,MAAM,gBAAgB,CAAC;AAC9C,OAAO,KAAK,EAAE,sBAAsB,EAAE,MAAM,SAAS,CAAC;AAEtD,MAAM,WAAW,oBAAoB;IACnC,MAAM,EAAE,YAAY,CAAC;CACtB;AAED;;;;;;;;;;;;;;;GAeG;AACH,wBAAgB,mBAAmB,CAAC,IAAI,EAAE,oBAAoB,GAAG,sBAAsB,CAoNtF"}
