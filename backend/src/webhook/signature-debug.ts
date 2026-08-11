@@ -21,7 +21,7 @@ import { tryAllSignatureAlgorithms } from './signature';
  *
  * 此路由不验签，只打印所有算法的匹配结果，方便排查。
  */
-export function createSignatureDebugRouter(secret: string): Router {
+export function createSignatureDebugRouter(secret: string, clientKey: string): Router {
   const router = Router();
 
   router.post('/tiktok-debug', (req, res) => {
@@ -38,7 +38,7 @@ export function createSignatureDebugRouter(secret: string): Router {
     console.log('Raw body:', rawBody.toString('utf8'));
 
     // 尝试所有已知算法
-    const results = tryAllSignatureAlgorithms(rawBody, req.headers as Record<string, string | string[] | undefined>, secret);
+    const results = tryAllSignatureAlgorithms(rawBody, req.headers as Record<string, string | string[] | undefined>, secret, clientKey);
 
     console.log('Signature attempts:');
     for (const r of results) {

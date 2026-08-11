@@ -22,7 +22,7 @@ const signature_1 = require("./signature");
  *
  * 此路由不验签，只打印所有算法的匹配结果，方便排查。
  */
-function createSignatureDebugRouter(secret) {
+function createSignatureDebugRouter(secret, clientKey) {
     const router = (0, express_1.Router)();
     router.post('/tiktok-debug', (req, res) => {
         const rawBody = req.body;
@@ -35,7 +35,7 @@ function createSignatureDebugRouter(secret) {
         console.log('Headers:', JSON.stringify(req.headers, null, 2));
         console.log('Raw body:', rawBody.toString('utf8'));
         // 尝试所有已知算法
-        const results = (0, signature_1.tryAllSignatureAlgorithms)(rawBody, req.headers, secret);
+        const results = (0, signature_1.tryAllSignatureAlgorithms)(rawBody, req.headers, secret, clientKey);
         console.log('Signature attempts:');
         for (const r of results) {
             console.log(`  ${r.algorithm}: expected=${r.expected}, matched=${r.matched}`);

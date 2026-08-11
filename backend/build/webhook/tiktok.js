@@ -32,12 +32,15 @@ function createTikTokWebhookRouter(config) {
             return;
         }
         try {
-            // 安全校验 2：签名验证
             (0, signature_1.verifyWebhookSignature)(rawBody, req.headers, config.signature);
         }
         catch (err) {
             if (err instanceof signature_1.WebhookSignatureError) {
                 console.warn('[TikTokWebhook] Signature verification failed:', err.message);
+                const attempts = (0, signature_1.tryAllSignatureAlgorithms)(rawBody, req.headers, config.signature.secret, config.signature.clientKey, config.signature.headerName);
+                for (const a of attempts) {
+                    console.log(`[TikTokWebhook]   ${a.algorithm}: matched=${a.matched}`);
+                }
                 res.status(401).json({ error: 'Unauthorized', message: err.message });
                 return;
             }

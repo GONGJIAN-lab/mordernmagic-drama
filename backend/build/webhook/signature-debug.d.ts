@@ -18,5 +18,5 @@ import { Router } from 'express';
  *
  * 此路由不验签，只打印所有算法的匹配结果，方便排查。
  */
-export declare function createSignatureDebugRouter(secret: string): Router;
+export declare function createSignatureDebugRouter(secret: string, clientKey: string): Router;
 //# sourceMappingURL=signature-debug.d.ts.map

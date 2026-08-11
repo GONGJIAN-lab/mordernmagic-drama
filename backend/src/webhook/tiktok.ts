@@ -8,7 +8,7 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { verifyWebhookSignature, WebhookSignatureError } from './signature';
+import { verifyWebhookSignature, WebhookSignatureError, tryAllSignatureAlgorithms } from './signature';
 import { WebhookService } from './service';
 import type { WebhookHandlerConfig, TikTokWebhookPayload } from './types';
 
@@ -34,11 +34,12 @@ export function createTikTokWebhookRouter(config: WebhookHandlerConfig): Router 
     }
 
     try {
-      // 安全校验 2：签名验证
       verifyWebhookSignature(rawBody, req.headers as Record<string, string | string[] | undefined>, config.signature);
     } catch (err) {
       if (err instanceof WebhookSignatureError) {
         console.warn('[TikTokWebhook] Signature verification failed:', err.message);
+        const attempts = tryAllSignatureAlgorithms(rawBody, req.headers as Record<string, string | string[] | undefined>, config.signature.secret, config.signature.clientKey, config.signature.headerName);
+        for (const a of attempts) { console.log(`[TikTokWebhook]   ${a.algorithm}: matched=${a.matched}`); }
         res.status(401).json({ error: 'Unauthorized', message: err.message });
         return;
       }

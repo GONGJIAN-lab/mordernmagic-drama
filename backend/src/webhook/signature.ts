@@ -25,8 +25,9 @@ export function verifyWebhookSignature(
 ): true {
   const {
     secret,
-    headerName = 'x-tiktok-signature',
-    algorithm = 'hmac-sha256-hex',
+    clientKey,
+    headerName = 'authorization',
+    algorithm = 'tiktok-shop',
     checkTimestamp = true,
     timestampTolerance = 300,
   } = config;
@@ -52,6 +53,13 @@ export function verifyWebhookSignature(
   // 3. 根据算法计算期望签名
   let expected: string;
   switch (algorithm) {
+    case 'tiktok-shop': {
+      const payload = clientKey + rawBody.toString('utf8');
+      const hmac = crypto.createHmac('sha256', secret);
+      hmac.update(payload);
+      expected = hmac.digest('hex');
+      break;
+    }
     case 'hmac-sha256': {
       // 标准 HMAC-SHA256，结果 base64
       const hmac = crypto.createHmac('sha256', secret);
@@ -103,7 +111,8 @@ export function tryAllSignatureAlgorithms(
   rawBody: Buffer,
   headers: Record<string, string | string[] | undefined>,
   secret: string,
-  headerName = 'x-tiktok-signature'
+  clientKey: string,
+  headerName = 'authorization'
 ): Array<{ algorithm: string; expected: string; matched: boolean }> {
   const signatureHeader = getHeaderCaseInsensitive(headers, headerName);
   if (!signatureHeader) {
@@ -112,6 +121,15 @@ export function tryAllSignatureAlgorithms(
 
   const actual = String(signatureHeader).trim();
   const algorithms = [
+    {
+      name: 'tiktok-shop',
+      compute: () => {
+        const payload = clientKey + rawBody.toString('utf8');
+        const hmac = crypto.createHmac('sha256', secret);
+        hmac.update(payload);
+        return hmac.digest('hex');
+      },
+    },
     {
       name: 'hmac-sha256',
       compute: () => {

@@ -127,8 +127,9 @@ app.use(
   createTikTokWebhookRouter({
     signature: {
       secret: process.env.TIKTOK_WEBHOOK_SECRET || '',
-      headerName: 'x-tiktok-signature',
-      algorithm: 'hmac-sha256-hex',
+      clientKey: process.env.TIKTOK_CLIENT_KEY || '',
+      headerName: 'authorization',
+      algorithm: 'tiktok-shop',
       checkTimestamp: true,
       timestampTolerance: 300,
     },

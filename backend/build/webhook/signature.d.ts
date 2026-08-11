@@ -20,7 +20,7 @@ export declare function verifyWebhookSignature(rawBody: Buffer, headers: Record<
  * 尝试所有已知算法，返回匹配结果（用于调试）
  * 当收到真实 webhook 但不确定算法时，调用此函数排查
  */
-export declare function tryAllSignatureAlgorithms(rawBody: Buffer, headers: Record<string, string | string[] | undefined>, secret: string, headerName?: string): Array<{
+export declare function tryAllSignatureAlgorithms(rawBody: Buffer, headers: Record<string, string | string[] | undefined>, secret: string, clientKey: string, headerName?: string): Array<{
     algorithm: string;
     expected: string;
     matched: boolean;

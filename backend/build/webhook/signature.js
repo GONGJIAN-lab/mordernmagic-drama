@@ -24,7 +24,7 @@ const crypto_1 = __importDefault(require("crypto"));
  * @returns        验证通过返回 true，否则抛出错误
  */
 function verifyWebhookSignature(rawBody, headers, config) {
-    const { secret, headerName = 'x-tiktok-signature', algorithm = 'hmac-sha256-hex', checkTimestamp = true, timestampTolerance = 300, } = config;
+    const { secret, clientKey, headerName = 'authorization', algorithm = 'tiktok-shop', checkTimestamp = true, timestampTolerance = 300, } = config;
     // 1. 取签名 header（大小写不敏感）
     const signatureHeader = getHeaderCaseInsensitive(headers, headerName);
     if (!signatureHeader) {
@@ -44,6 +44,13 @@ function verifyWebhookSignature(rawBody, headers, config) {
     // 3. 根据算法计算期望签名
     let expected;
     switch (algorithm) {
+        case 'tiktok-shop': {
+            const payload = clientKey + rawBody.toString('utf8');
+            const hmac = crypto_1.default.createHmac('sha256', secret);
+            hmac.update(payload);
+            expected = hmac.digest('hex');
+            break;
+        }
         case 'hmac-sha256': {
             // 标准 HMAC-SHA256，结果 base64
             const hmac = crypto_1.default.createHmac('sha256', secret);
@@ -86,13 +93,22 @@ function verifyWebhookSignature(rawBody, headers, config) {
  * 尝试所有已知算法，返回匹配结果（用于调试）
  * 当收到真实 webhook 但不确定算法时，调用此函数排查
  */
-function tryAllSignatureAlgorithms(rawBody, headers, secret, headerName = 'x-tiktok-signature') {
+function tryAllSignatureAlgorithms(rawBody, headers, secret, clientKey, headerName = 'authorization') {
     const signatureHeader = getHeaderCaseInsensitive(headers, headerName);
     if (!signatureHeader) {
         return [];
     }
     const actual = String(signatureHeader).trim();
     const algorithms = [
+        {
+            name: 'tiktok-shop',
+            compute: () => {
+                const payload = clientKey + rawBody.toString('utf8');
+                const hmac = crypto_1.default.createHmac('sha256', secret);
+                hmac.update(payload);
+                return hmac.digest('hex');
+            },
+        },
         {
             name: 'hmac-sha256',
             compute: () => {
