@@ -69,3 +69,78 @@ model WatchHistory {
 
   @@unique([userId, dramaId, episodeId])
 }
+
+// ============================================================
+// TikTok Minis Webhook Models
+// ============================================================
+
+model WebhookEvent {
+  id          String   @id @default(uuid())
+  eventId     String   @unique @map("event_id")
+  eventType   String   @map("event_type")
+  payload     String   @db.Text
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@index([eventId])
+  @@index([processedAt])
+  @@map("webhook_events")
+}
+
+model MinisOrder {
+  id          String    @id @default(uuid())
+  orderId     String    @unique @map("order_id")
+  outOrderNo  String?   @map("out_order_no")
+  openId      String    @map("open_id")
+  skuId       String    @map("sku_id")
+  quantity    Int       @default(1)
+  totalAmount Int       @map("total_amount")
+  currency    String    @default("USD")
+  status      String
+  payTime     DateTime? @map("pay_time")
+  attach      String?   @db.Text
+  failReason  String?   @map("fail_reason")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@index([openId])
+  @@index([status])
+  @@map("minis_orders")
+}
+
+model MinisSubscription {
+  id             String    @id @default(uuid())
+  subscriptionId String    @unique @map("subscription_id")
+  openId         String    @map("open_id")
+  skuId          String    @map("sku_id")
+  status         String
+  startTime      DateTime  @map("start_time")
+  expireTime     DateTime? @map("expire_time")
+  autoRenew      Boolean   @default(true) @map("auto_renew")
+  nextRenewTime  DateTime? @map("next_renew_time")
+  cancelReason   String?   @map("cancel_reason")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([subscriptionId])
+  @@index([openId])
+  @@index([status])
+  @@map("minis_subscriptions")
+}
+
+model UserUnlock {
+  id         String    @id @default(uuid())
+  openId     String    @map("open_id")
+  skuId      String    @map("sku_id")
+  orderId    String    @map("order_id")
+  dramaId    String?   @map("drama_id")
+  episodeId  String?   @map("episode_id")
+  unlockType String    @map("unlock_type")
+  validUntil DateTime? @map("valid_until")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@unique([openId, skuId, orderId])
+  @@index([openId])
+  @@index([dramaId])
+  @@map("user_unlocks")
+}

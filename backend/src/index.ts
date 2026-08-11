@@ -15,6 +15,8 @@ import Stripe from 'stripe';
 import { PrismaClient } from '@prisma/client';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createTikTokWebhookRouter } from './webhook/tiktok';
+import { createPrismaAdapter } from './webhook/prisma-adapter';
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -116,6 +118,24 @@ app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async
     next(err);
   }
 });
+
+// ===== TikTok Minis Webhook (MUST be before express.json()) =====
+app.use('/webhook/tiktok', express.raw({ type: 'application/json' }));
+const tiktokDbAdapter = createPrismaAdapter({ prisma });
+app.use(
+  '/webhook',
+  createTikTokWebhookRouter({
+    signature: {
+      secret: process.env.TIKTOK_WEBHOOK_SECRET || '',
+      headerName: 'x-tiktok-signature',
+      algorithm: 'hmac-sha256-hex',
+      checkTimestamp: true,
+      timestampTolerance: 300,
+    },
+    db: tiktokDbAdapter,
+    verbose: process.env.NODE_ENV !== 'production',
+  })
+);
 
 // ===== JSON body parser for all other routes =====
 app.use(express.json());
