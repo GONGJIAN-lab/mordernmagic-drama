@@ -107,61 +107,14 @@ export function verifyWebhookSignature(
         }
       }
 
-      // 尝试所有可能的签名算法组合（调试模式）
+      // 签名算法: HMAC-SHA256(secret, timestamp + "." + body)
       const bodyStr = rawBody.toString('utf8');
-      const attempts: Array<{ name: string; expected: string }> = [
-        {
-          name: 'hmac-sha256(body)',
-          expected: crypto.createHmac('sha256', secret).update(rawBody).digest('hex'),
-        },
-        {
-          name: 'hmac-sha256(timestamp+body)',
-          expected: crypto.createHmac('sha256', secret).update(timestamp + bodyStr).digest('hex'),
-        },
-        {
-          name: 'hmac-sha256(timestamp+"."+body)',
-          expected: crypto.createHmac('sha256', secret).update(timestamp + '.' + bodyStr).digest('hex'),
-        },
-        {
-          name: 'hmac-sha256(timestamp+":"+body)',
-          expected: crypto.createHmac('sha256', secret).update(timestamp + ':' + bodyStr).digest('hex'),
-        },
-        {
-          name: 'hmac-sha256(timestamp+"|"+body)',
-          expected: crypto.createHmac('sha256', secret).update(timestamp + '|' + bodyStr).digest('hex'),
-        },
-        {
-          name: 'sha256(secret+body)',
-          expected: crypto.createHash('sha256').update(secret + bodyStr).digest('hex'),
-        },
-        {
-          name: 'sha256(body+secret)',
-          expected: crypto.createHash('sha256').update(bodyStr + secret).digest('hex'),
-        },
-      ];
+      expected = crypto.createHmac('sha256', secret).update(timestamp + '.' + bodyStr).digest('hex');
 
-      console.log('[SignatureDebug] tiktok-minis attempts:');
-      console.log(`  actual signature: ${actualSignature}`);
-      console.log(`  timestamp: ${timestamp}`);
-      console.log(`  body length: ${bodyStr.length}`);
-      let matchedAny = false;
-      for (const a of attempts) {
-        const matched = a.expected === actualSignature;
-        console.log(
-          `  ${a.name}: ${a.expected.substring(0, 20)}... matched=${matched}`
-        );
-        if (matched) {
-          expected = a.expected;
-          matchedAny = true;
-          break;
-        }
-      }
-      if (!matchedAny) {
-        // 没有匹配的，抛错但把最接近的信息带出来
+      if (expected !== actualSignature) {
         throw new WebhookSignatureError(
-          `Signature verification failed. ` +
-          `Timestamp=${timestamp}, bodyLength=${bodyStr.length}, ` +
-          `firstAttempt=${attempts[0].expected.substring(0, 20)}...`
+          'Signature verification failed. ' +
+          'Timestamp=' + timestamp + ', bodyLength=' + bodyStr.length
         );
       }
       // tiktok-minis 在 case 内部已完成验证，直接返回

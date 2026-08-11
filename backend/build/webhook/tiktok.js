@@ -51,15 +51,23 @@ function createTikTokWebhookRouter(config) {
         try {
             payload = JSON.parse(rawBody.toString('utf8'));
         }
-        catch {
+        catch (parseErr) {
+            console.error('[TikTokWebhook] JSON parse error:', parseErr);
+            console.error('[TikTokWebhook] Body preview:', rawBody.toString('utf8').slice(0, 500));
             res.status(400).json({ error: 'Invalid JSON' });
             return;
         }
-        // 安全校验 4：字段基本校验
-        if (!payload.event_type || !payload.event_id) {
-            res.status(400).json({ error: 'Missing event_type or event_id' });
+        // 安全校验 4：字段基本校验（兼容 TikTok 的字段命名：event / event_type）
+        const eventType = payload.event_type || payload.event;
+        const eventId = payload.event_id || payload.create_time || payload.timestamp;
+        if (!eventType || !eventId) {
+            console.error('[TikTokWebhook] Missing fields. Payload keys:', Object.keys(payload));
+            res.status(400).json({ error: 'Missing event_type/event or event_id' });
             return;
         }
+        // 统一字段名，方便后续处理
+        payload.event_type = eventType;
+        payload.event_id = eventId;
         // 检查是否有自定义处理器
         const customHandler = config.customHandlers?.[payload.event_type];
         if (customHandler) {
