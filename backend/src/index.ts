@@ -377,7 +377,25 @@ app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res,
       Key: ep.s3Key,
     });
     const playUrl = await getSignedUrl(s3, cmd, { expiresIn: 86400 });
-    res.data({ playUrl });
+
+    // ===== 追加：字幕 Signed URL =====
+    const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+    let subtitleUrl: string | null = null;
+    try {
+      subtitleUrl = await getSignedUrl(
+        s3,
+        new GetObjectCommand({
+          Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+          Key: subtitleS3Key,
+        }),
+        { expiresIn: 300 }
+      );
+    } catch (e) {
+      console.log('Subtitle not found for key:', subtitleS3Key);
+    }
+    // ===== 追加结束 =====
+
+    res.data({ playUrl, subtitleUrl, subtitleFormat: 'srt', subtitleLang: 'en' });
   } catch (e: any) {
     next(e);
   }
