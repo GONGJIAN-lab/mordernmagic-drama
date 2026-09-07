@@ -4,15 +4,14 @@
   "description": "MORDERN MAGIC short drama platform backend",
   "main": "dist/index.js",
   "scripts": {
-    "build": "rm -rf build && tsc && cp byteplus-routes.js build/byteplus-routes.js",
+    "build": "prisma generate && rm -rf build && tsc && cp byteplus-routes.js build/byteplus-routes.js",
 
     "start": "prisma migrate deploy && node build/index.js",
     "dev": "ts-node src/index.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio",
-    "postinstall": "prisma generate"
+    "db:studio": "prisma studio"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",
