@@ -140,6 +140,7 @@ app.use(
 
 // ===== JSON body parser for all other routes =====
 app.use(express.json());
+app.use('/api', require('./byteplus-routes'));
 
 // ===== Health Check =====
 app.get('/health', (_req, res) => {
