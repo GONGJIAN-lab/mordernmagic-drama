@@ -1,0 +1,15 @@
+{
+  "name": "DramaFlix",
+  "resource_list": [
+    {
+      "name": "assets",
+      "children": [
+        { "name": "assets/index-D82mLRNv.js" },
+        { "name": "assets/index-Pn5Am6ZP.css" },
+        { "name": "assets/vendor-CEV3TsPk.js" }
+      ]
+    },
+    { "name": "index.html" },
+    { "name": "minis.config.json" }
+  ]
+}

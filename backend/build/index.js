@@ -116,6 +116,9 @@ app.use('/webhook', (0, tiktok_1.createTikTokWebhookRouter)({
 }));
 // ===== JSON body parser for all other routes =====
 app.use(express_1.default.json());
+app.use((req, _res, next) => { req.prisma = prisma; next(); });
+app.use((req, _res, next) => { req.prisma = prisma; next(); });
+app.use('/api', require('./byteplus-routes'));
 // ===== Health Check =====
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
@@ -336,8 +339,21 @@ app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res,
             Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
             Key: ep.s3Key,
         });
-        const playUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, cmd, { expiresIn: 86400 });
-        res.data({ playUrl });
+        const playUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, cmd, { expiresIn: 604800 });
+        // ===== 追加：字幕 Signed URL =====
+        const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+        let subtitleUrl = null;
+        try {
+            subtitleUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({
+                Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+                Key: subtitleS3Key,
+            }), { expiresIn: 300 });
+        }
+        catch (e) {
+            console.log('Subtitle not found for key:', subtitleS3Key);
+        }
+        // ===== 追加结束 =====
+        res.data({ playUrl, subtitleUrl, subtitleFormat: 'srt', subtitleLang: 'en' });
     }
     catch (e) {
         next(e);

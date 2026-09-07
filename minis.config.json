@@ -1,0 +1,25 @@
+{
+  "dev": {
+    "clientKey": "mnmycyuu09t11gnk",
+    "name": "DramaFlix",
+    "host": "localhost",
+    "port": 3000,
+    "iconUrl": "https://api.drama.mordernmagic.com/static/icons/icon-192.png",
+    "desc": "DramaFlix - TikTok Mini Drama Platform. Watch exclusive short dramas.",
+    "ppLink": "https://legal.mordernmagic.com/privacy",
+    "tosLink": "https://legal.mordernmagic.com/terms"
+  },
+  "navbar": {
+    "bgColorLight": "#ffffff",
+    "bgColorDark": "#000000"
+  },
+  "build": {
+    "htmlEntry": "index.html",
+    "outputDir": "dist"
+  },
+  "domain": {
+    "allowList": [
+      "https://api.drama.mordernmagic.com"
+    ]
+  }
+}

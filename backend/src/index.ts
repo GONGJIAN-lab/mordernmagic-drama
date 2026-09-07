@@ -140,6 +140,8 @@ app.use(
 
 // ===== JSON body parser for all other routes =====
 app.use(express.json());
+app.use((req, _res, next) => { (req as any).prisma = prisma; next(); });
+app.use((req: any, _res: any, next: any) => { req.prisma = prisma; next(); });
 app.use('/api', require('./byteplus-routes'));
 
 // ===== Health Check =====
