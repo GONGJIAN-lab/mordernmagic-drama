@@ -87,9 +87,13 @@ class BytePlusVodAdapter {
   }
 
   // AWS4-HMAC-SHA256 request signing
-  _sign(method, path, queryObj, headerObj) {
-    const now = new Date();
-    const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+  // amzDate must be passed in (not generated here) so the same value can be
+  // placed in the actual request headers AND in the canonical headers used
+  // for signing. If the two drift, BytePlus will return InvalidAuthorization.
+  _sign(method, path, queryObj, headerObj, amzDate) {
+    if (!amzDate) {
+      amzDate = new Date().toISOString().replace(/[:\-]|\.\d{3}/g, '');
+    }
     const dateStamp = amzDate.slice(0, 8);
 
     // 1) Canonical request
@@ -142,14 +146,19 @@ class BytePlusVodAdapter {
       const method = 'GET';
       const path = '/';
 
+      // Pre-compute amzDate so the same value goes into headerObj (signed)
+      // AND into the actual request headers (sent on the wire). If they
+      // drift, AWS4 signature validation fails with InvalidAuthorization.
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+
       const headerObj = {
         'Host': this.host,
         'X-Account-Id': this.accountId,
-        'X-Date': ''
+        'X-Date': amzDate
       };
 
-      const { amzDate, authorization } = this._sign(method, path, queryObj, headerObj);
-      headerObj['X-Date'] = amzDate;
+      const { authorization } = this._sign(method, path, queryObj, headerObj, amzDate);
 
       const queryStr = Object.keys(queryObj).sort()
         .map(k => this._uriEncode(k) + '=' + this._uriEncode(queryObj[k]))
