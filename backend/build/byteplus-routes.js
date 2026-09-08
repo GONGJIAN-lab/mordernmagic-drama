@@ -27,10 +27,10 @@ class BytePlusVodAdapter {
     if (!this.ak || !this.sk) throw new Error('BYTEPLUS_ACCESS_KEY_ID and BYTEPLUS_SECRET_ACCESS_KEY required');
 
     this.service = new Service({
-      AccessKeyId: this.ak,
-      SecretKey: this.sk,
-      Region: 'ap-singapore-1',
-      Service: 'vod',
+      accessKeyId: this.ak,
+      secretKey: this.sk,
+      region: 'ap-singapore-1',
+      serviceName: 'vod',
       Host: 'vod.byteplusapi.com',
     });
   }
