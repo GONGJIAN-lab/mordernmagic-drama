@@ -42,7 +42,7 @@ class BytePlusVodAdapter {
       const result = response.Result || response.result;
       if (!result || !result.PlayInfoList || !result.PlayInfoList.length) throw new Error('No play info');
       const info = result.PlayInfoList[0];
-      return { mainPlayUrl: info.MainPlayUrl, backupPlayUrl: info.BackupPlayUrl, duration: info.Duration };
+      console.log('[BytePlus Debug] Vid:', vid, 'Result:', JSON.stringify(result).substring(0, 800)); return { mainPlayUrl: info.MainPlayUrl, backupPlayUrl: info.BackupPlayUrl, duration: info.Duration };
     } catch (err) {
       const msg = err.message || JSON.stringify(err);
       throw new Error(`BytePlus GetPlayInfo failed: ${msg.substring(0, 500)}`);
