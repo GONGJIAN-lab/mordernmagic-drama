@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const https = require('https');
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 
 // Special chars as character codes to prevent chat/base64 roundtrip corruption.
@@ -272,6 +273,60 @@ router.get('/episodes/:dramaId', async (req, res) => {
   } catch (e) {
     console.error('[episodes] error: ' + e.message);
     res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ===== Debug endpoint: list all dramas + episode byteplusVid fill status =====
+// Purpose: from Railway logs/curl, identify dramaId and see which episodes
+// have byteplusVid populated (i.e. already uploaded to BytePlus VOD).
+// Uses an internal PrismaClient (the byteplusVid column is not in schema.prisma,
+// so we go through raw SQL).
+const debugPrisma = new PrismaClient();
+
+router.get('/_debug/dramas', async (req, res) => {
+  try {
+    const rows = await debugPrisma.$queryRawUnsafe(
+      'SELECT d."id", d."slug", d."title", '
+      + 'COUNT(e."id")::int AS ep_total, '
+      + 'COUNT(e."byteplusVid")::int AS ep_with_vid, '
+      + 'COUNT(CASE WHEN e."s3Key" IS NOT NULL THEN 1 END)::int AS ep_with_s3 '
+      + 'FROM "Drama" d LEFT JOIN "Episode" e ON e."dramaId" = d."id" '
+      + 'GROUP BY d."id", d."slug", d."title" '
+      + 'ORDER BY d."createdAt" ASC NULLS LAST'
+    );
+    res.json({ success: true, dramas: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ===== Startup log: print the same table once, so the operator can find
+// dramaIds and byteplusVid fill status from Railway boot logs alone.
+setImmediate(async () => {
+  try {
+    const rows = await debugPrisma.$queryRawUnsafe(
+      'SELECT d."id", d."slug", d."title", '
+      + 'COUNT(e."id")::int AS ep_total, '
+      + 'COUNT(e."byteplusVid")::int AS ep_with_vid, '
+      + 'COUNT(CASE WHEN e."s3Key" IS NOT NULL THEN 1 END)::int AS ep_with_s3 '
+      + 'FROM "Drama" d LEFT JOIN "Episode" e ON e."dramaId" = d."id" '
+      + 'GROUP BY d."id", d."slug", d."title" '
+      + 'ORDER BY d."createdAt" ASC NULLS LAST'
+    );
+    console.log('[DramaDump] === start ===');
+    for (const r of rows) {
+      console.log(
+        '[DramaDump] id=' + r.id
+        + ' slug=' + r.slug
+        + ' title=' + r.title
+        + ' ep=' + r.ep_total
+        + ' withVid=' + r.ep_with_vid
+        + ' withS3=' + r.ep_with_s3
+      );
+    }
+    console.log('[DramaDump] === end (' + rows.length + ' dramas) ===');
+  } catch (e) {
+    console.warn('[DramaDump] failed: ' + e.message);
   }
 });
 
