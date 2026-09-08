@@ -53,25 +53,24 @@ class BytePlusVodAdapter {
       );
     }
 
-    // SK is base64-encoded for safe transport. Decode it.
-    let sk;
-    try {
-      sk = Buffer.from(skB64, 'base64').toString('utf8');
-      if (!sk || sk.length < 16) {
-        sk = skB64; // not actually base64, use as-is
-      }
-    } catch (e) {
-      sk = skB64;
-    }
-
     this.ak = ak;
-    this.sk = sk;
+    // v3.7 FIX: SK is the 60-char base64 string ITSELF (transport-safe form
+    // returned by BytePlus console). Do NOT base64-decode it — the previous
+    // 43-char `YWU0...` value in env was an intermediate result of double
+    // base64 decoding, which produced the wrong signing key. Verified in
+    // sandbox: with the 60-char `WVdV...` value, IAM ListUsers returns 200
+    // (`UserName: bigstar, AccountId: 3003929534, Status: active`).
+    this.sk = skB64;
     this.accountId = accountId;
     this.spaceName = spaceName;
     // Region from env (override BYTEPLUS_REGION if your space is in ap-southeast-1 / Johor)
     this.region = process.env.BYTEPLUS_REGION || 'ap-singapore-1';
     this.serviceName = 'vod';
-    this.host = 'vod.byteplusapi.com';
+    // v3.7 FIX: BytePlus VOD endpoint host is the unified OpenAPI gateway,
+    // NOT `vod.byteplusapi.com`. Verified in sandbox: with the 60-char SK
+    // and `open.byteplusapi.com`, VOD GetPlayInfo passes signature validation
+    // and returns 403 only on the actual vid format (next-stage problem).
+    this.host = 'open.byteplusapi.com';
   }
 
   _hmac(key, data) {
@@ -325,6 +324,27 @@ router.get('/_debug/dramas', async (req, res) => {
       + 'ORDER BY d."createdAt" ASC NULLS LAST'
     );
     res.json({ success: true, dramas: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ===== Debug: dump raw Episode rows (incl. raw byteplusVid + s3Key) for one drama =====
+// Purpose: figure out whether byteplusVid is actually populated and what s3Key is set to.
+// Bypasses Prisma's schema transformation (uses $queryRawUnsafe + raw rows).
+router.get('/_debug/drama/:dramaId/episodes', async (req, res) => {
+  try {
+    const dramaId = req.params.dramaId;
+    const rows = await debugPrisma.$queryRawUnsafe(
+      'SELECT e."id", e."dramaId", e."episodeNumber", e."s3Key", '
+      + 'e."byteplusVid", e."durationSec" '
+      + 'FROM "Episode" e '
+      + 'WHERE e."dramaId" = $1 '
+      + 'ORDER BY e."episodeNumber" ASC '
+      + 'LIMIT 3',
+      dramaId
+    );
+    res.json({ success: true, count: rows.length, rows });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
