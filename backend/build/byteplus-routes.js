@@ -17,25 +17,64 @@ class BytePlusVodAdapter {
     if (!this.ak || !this.sk) throw new Error('BYTEPLUS_ACCESS_KEY_ID and BYTEPLUS_SECRET_ACCESS_KEY required');
   }
 
-  _sign(method, uri, queryString) {
-    const date = new Date().toUTCString();
+  _sign(method, uri, queryObj) {
+    const now = new Date();
+    const datetime = now.toISOString().replace(/[:-]|.d{3}/g, '');
+    const date = datetime.substring(0, 8);
+    const region = 'ap-singapore-1';
+    const service = 'vod';
+    const credentialScope = `${date}/${region}/${service}`;
+
+    const sortedQueryKeys = Object.keys(queryObj).sort();
+    const canonicalQueryString = sortedQueryKeys
+      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(queryObj[k])}`)
+      .join('&');
+
+    const headers = { host: 'vod.byteplusapi.com', 'x-date': datetime };
+    const sortedHeaderKeys = Object.keys(headers).sort();
+    const canonicalHeaders = sortedHeaderKeys.map(k => `${k}:${headers[k].trim()}
+`).join('');
+    const signedHeaders = sortedHeaderKeys.join(';');
+
+    const bodyHash = crypto.createHash('sha256').update('').digest('hex');
+
     const canonicalRequest = [
-      method.toUpperCase(), uri, queryString || '',
-      'host:vod.byteplusapi.com', 'host',
-      crypto.createHash('sha256').update('').digest('hex'),
-    ].join('\n');
-    const stringToSign = `HMAC-SHA256\n${date}\n${crypto.createHash('sha256').update(canonicalRequest).digest('hex')}`;
-    const signature = crypto.createHmac('sha256', this.sk).update(stringToSign).digest('hex');
-    return { authorization: `HMAC-SHA256 Credential=${this.ak}, SignedHeaders=host, Signature=${signature}`, date };
+      method.toUpperCase(), uri, canonicalQueryString, canonicalHeaders, signedHeaders, bodyHash
+    ].join('
+');
+
+    const stringToSign = [
+      'HMAC-SHA256', datetime, credentialScope,
+      crypto.createHash('sha256').update(canonicalRequest).digest('hex')
+    ].join('
+');
+
+    const kDate = crypto.createHmac('sha256', this.sk).update(date).digest();
+    const kRegion = crypto.createHmac('sha256', kDate).update(region).digest();
+    const kService = crypto.createHmac('sha256', kRegion).update(service).digest();
+    const kSigning = crypto.createHmac('sha256', kService).update('request').digest();
+    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+
+    return {
+      authorization: `HMAC-SHA256 Credential=${this.ak}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      date: datetime,
+    };
   }
 
   async getPlayInfo(vid) {
-    const params = new URLSearchParams({ Action: 'GetPlayInfo', Version: VOD_VERSION, Vid: vid });
-    const queryString = params.toString();
-    const { authorization, date } = this._sign('GET', '/', queryString);
-    const response = await fetch(`${VOD_ENDPOINT}?${queryString}`, {
+    const params = { Action: 'GetPlayInfo', Version: VOD_VERSION, Vid: vid };
+    const { authorization, date } = this._sign('GET', '/', params);
+    const sortedQueryString = Object.keys(params).sort()
+      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
+      .join('&');
+    const response = await fetch(`${VOD_ENDPOINT}?${sortedQueryString}`, {
       method: 'GET',
-      headers: { 'Host': 'vod.byteplusapi.com', 'X-Date': date, 'Authorization': authorization, 'X-Account-Id': process.env.BYTEPLUS_ACCOUNT_ID },
+      headers: {
+        'Host': 'vod.byteplusapi.com',
+        'X-Date': date,
+        'Authorization': authorization,
+        'X-Account-Id': process.env.BYTEPLUS_ACCOUNT_ID,
+      },
     });
     if (!response.ok) { const body = await response.text(); throw new Error(`HTTP ${response.status}: ${body.substring(0, 500)}`); }
     const data = await response.json();
