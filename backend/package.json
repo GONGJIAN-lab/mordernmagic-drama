@@ -5,7 +5,6 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "prisma generate && rm -rf build && tsc && cp byteplus-routes.js build/byteplus-routes.js",
-
     "start": "prisma migrate deploy && node build/index.js",
     "dev": "ts-node src/index.ts",
     "db:generate": "prisma generate",
@@ -17,6 +16,7 @@
     "@aws-sdk/client-s3": "^3.1106.0",
     "@aws-sdk/s3-request-presigner": "^3.1106.0",
     "@prisma/client": "^5.18.0",
+    "@volcengine/openapi": "^1.36.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
