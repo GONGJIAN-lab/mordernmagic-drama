@@ -19,7 +19,8 @@ class BytePlusVodAdapter {
 
   _sign(method, uri, queryObj) {
     const now = new Date();
-    const datetime = now.toISOString().replace(/[:-]|.d{3}/g, '');
+    const pad = (n) => String(n).padStart(2, '0');
+    const datetime = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
     const date = datetime.substring(0, 8);
     const region = 'ap-singapore-1';
     const service = 'vod';
@@ -40,14 +41,12 @@ class BytePlusVodAdapter {
 
     const canonicalRequest = [
       method.toUpperCase(), uri, canonicalQueryString, canonicalHeaders, signedHeaders, bodyHash
-    ].join('
-');
+    ].join('\n');
 
     const stringToSign = [
       'HMAC-SHA256', datetime, credentialScope,
       crypto.createHash('sha256').update(canonicalRequest).digest('hex')
-    ].join('
-');
+    ].join('\n');
 
     const kDate = crypto.createHmac('sha256', this.sk).update(date).digest();
     const kRegion = crypto.createHmac('sha256', kDate).update(region).digest();
