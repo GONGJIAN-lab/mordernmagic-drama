@@ -44,17 +44,30 @@ class BytePlusVodAdapter {
       };
       if (this.accountId) params.headers = { 'X-Account-Id': this.accountId };
       const response = await this.service.fetchOpenAPI(params);
-      const text = await response.text();
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${text.substring(0, 500)}`);
+      console.log('[BytePlus Debug] response type:', typeof response, 'ctor:', response && response.constructor && response.constructor.name, 'keys:', response && typeof response === 'object' ? Object.keys(response).slice(0, 30) : 'n/a');
+
+      // 万能 unwrap: SDK 在不同 Node 版本下可能返回 Response/已解析 JSON/字符串/原始对象
+      let data = response;
+      if (data == null) throw new Error('SDK returned null/undefined');
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch { throw new Error('String not JSON: ' + data.substring(0, 200)); }
+      } else if (typeof data.text === 'function') {
+        const text = await data.text();
+        if (data.status && data.status >= 400) throw new Error(`HTTP ${data.status}: ${text.substring(0, 500)}`);
+        try { data = JSON.parse(text); } catch { throw new Error('text not JSON: ' + text.substring(0, 200)); }
+      } else if (typeof data.json === 'function') {
+        data = await data.json();
+      } else if (data.body) {
+        const body = Buffer.isBuffer(data.body) ? data.body.toString() : (typeof data.body === 'string' ? data.body : JSON.stringify(data.body));
+        try { data = JSON.parse(body); } catch { throw new Error('body not JSON: ' + body.substring(0, 200)); }
       }
-      let data;
-      try { data = JSON.parse(text); } catch { throw new Error(`Invalid JSON: ${text.substring(0, 200)}`); }
+      if (!data || typeof data !== 'object') throw new Error('data not object: ' + typeof data);
+
       const result = data.Result || data.result;
-      if (!result) throw new Error('No Result field');
+      if (!result) throw new Error('No Result field in: ' + JSON.stringify(data).substring(0, 300));
       const list = result.PlayInfoList || result.playInfoList;
       if (!list || !list.length) {
-        console.log('[BytePlus Debug] No PlayInfoList for Vid:', vid, 'Status:', result.Status || result.status);
+        console.log('[BytePlus Debug] No PlayInfoList for Vid:', vid, 'Status:', result.Status || result.status, 'Result keys:', Object.keys(result));
         throw new Error('No PlayInfoList in response');
       }
       const info = list[0];
