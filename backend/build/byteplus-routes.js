@@ -37,7 +37,7 @@ class BytePlusVodAdapter {
       method: 'GET',
       headers: { 'Host': 'vod.byteplusapi.com', 'X-Date': date, 'Authorization': authorization, 'X-Account-Id': process.env.BYTEPLUS_ACCOUNT_ID },
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) { const body = await response.text(); throw new Error(`HTTP ${response.status}: ${body.substring(0, 500)}`); }
     const data = await response.json();
     const result = data.Result || data.result;
     if (!result?.PlayInfoList?.length) throw new Error('No play info');
