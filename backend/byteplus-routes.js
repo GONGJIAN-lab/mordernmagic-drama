@@ -33,18 +33,40 @@ class BytePlusVodAdapter {
       Service: 'vod',
       Host: 'vod.byteplusapi.com',
     });
-    if (this.accountId) this.service.setHeader('X-Account-Id', this.accountId);
   }
 
   async getPlayInfo(vid) {
     try {
-      const response = await this.service.request('GetPlayInfo', { Vid: vid, Version: VOD_VERSION });
-      const result = response.Result || response.result;
-      if (!result || !result.PlayInfoList || !result.PlayInfoList.length) throw new Error('No play info');
-      const info = result.PlayInfoList[0];
-      console.log('[BytePlus Debug] Vid:', vid, 'Result:', JSON.stringify(result).substring(0, 800)); return { mainPlayUrl: info.MainPlayUrl, backupPlayUrl: info.BackupPlayUrl, duration: info.Duration };
+      const params = {
+        Action: 'GetPlayInfo',
+        Version: VOD_VERSION,
+        query: { Vid: vid },
+      };
+      if (this.accountId) params.headers = { 'X-Account-Id': this.accountId };
+      const response = await this.service.fetchOpenAPI(params);
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${text.substring(0, 500)}`);
+      }
+      let data;
+      try { data = JSON.parse(text); } catch { throw new Error(`Invalid JSON: ${text.substring(0, 200)}`); }
+      const result = data.Result || data.result;
+      if (!result) throw new Error('No Result field');
+      const list = result.PlayInfoList || result.playInfoList;
+      if (!list || !list.length) {
+        console.log('[BytePlus Debug] No PlayInfoList for Vid:', vid, 'Status:', result.Status || result.status);
+        throw new Error('No PlayInfoList in response');
+      }
+      const info = list[0];
+      const playUrl = info.MainPlayUrl || info.mainPlayUrl;
+      if (!playUrl) {
+        console.log('[BytePlus Debug] No MainPlayUrl in:', JSON.stringify(info).substring(0, 500));
+        throw new Error('No MainPlayUrl in PlayInfo');
+      }
+      console.log('[BytePlus Debug] Vid:', vid, '->', playUrl.substring(0, 80));
+      return { mainPlayUrl: playUrl, backupPlayUrl: info.BackupPlayUrl || info.backupPlayUrl, duration: info.Duration || info.duration };
     } catch (err) {
-      const msg = err.message || JSON.stringify(err);
+      const msg = err && err.message ? err.message : JSON.stringify(err);
       throw new Error(`BytePlus GetPlayInfo failed: ${msg.substring(0, 500)}`);
     }
   }
