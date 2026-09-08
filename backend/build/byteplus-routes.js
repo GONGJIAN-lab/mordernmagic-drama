@@ -44,7 +44,7 @@ class BytePlusVodAdapter {
       };
       if (this.accountId) params.headers = { 'X-Account-Id': this.accountId };
       const response = await this.service.fetchOpenAPI(params);
-      console.log('[BytePlus Debug] response type:', typeof response, 'ctor:', response && response.constructor && response.constructor.name, 'keys:', response && typeof response === 'object' ? Object.keys(response).slice(0, 30) : 'n/a');
+      console.log('[BytePlus Debug] FULL:', JSON.stringify(response, null, 2).substring(0, 3000));
 
       // 万能 unwrap: SDK 在不同 Node 版本下可能返回 Response/已解析 JSON/字符串/原始对象
       let data = response;
