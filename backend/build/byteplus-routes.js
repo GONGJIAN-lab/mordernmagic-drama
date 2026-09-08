@@ -194,8 +194,11 @@ router.get('/episodes/:dramaId', async (req, res) => {
   }
 
   try {
+    // Only query fields we know exist. Episode table fields:
+    //   id, dramaId, episodeNumber, videoUrl, byteplusVid, createdAt, updatedAt
+    // (no title / duration / sourceType per current schema)
     const episodes = await prisma.$queryRawUnsafe(
-      'SELECT e."episodeNumber", e.title, e."videoUrl", e."byteplusVid", e.duration, e."sourceType" '
+      'SELECT e."episodeNumber", e."videoUrl", e."byteplusVid" '
       + 'FROM "Episode" e '
       + 'WHERE e."dramaId" = $1 '
       + 'ORDER BY e."episodeNumber" ASC',
@@ -209,9 +212,7 @@ router.get('/episodes/:dramaId', async (req, res) => {
     const enriched = await Promise.all(episodes.map(async (ep) => {
       const out = {
         episodeNumber: ep.episodeNumber,
-        title: ep.title,
         videoUrl: ep.videoUrl,
-        duration: ep.duration,
         source: 'cloudfront'
       };
 
