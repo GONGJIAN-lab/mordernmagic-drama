@@ -35,7 +35,7 @@ class BytePlusVodAdapter {
     const { authorization, date } = this._sign('GET', '/', queryString);
     const response = await fetch(`${VOD_ENDPOINT}?${queryString}`, {
       method: 'GET',
-      headers: { 'Host': 'vod.byteplusapi.com', 'X-Date': date, 'Authorization': authorization },
+      headers: { 'Host': 'vod.byteplusapi.com', 'X-Date': date, 'Authorization': authorization, 'X-Account-Id': process.env.BYTEPLUS_ACCOUNT_ID },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
