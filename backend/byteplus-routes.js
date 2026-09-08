@@ -1,6 +1,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const https = require('https');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const router = express.Router();
 
 // Special chars as character codes to prevent chat/base64 roundtrip corruption.
@@ -11,7 +13,25 @@ const SEMI = String.fromCharCode(59);  // semicolon
 const COLON = String.fromCharCode(58); // colon
 
 const VOD_VERSION = '2023-01-01';
+const S3_BUCKET = process.env.S3_BUCKET || 'mordernmagic-drama-media';
+const S3_SIGN_TTL = 604800; // 7 days, matching src/index.ts play-auth
 
+// ===== S3 client (same config as src/index.ts) =====
+let s3 = null;
+try {
+  s3 = new S3Client({
+    region: process.env.AWS_REGION || 'us-east-1',
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    },
+  });
+  console.log('[S3] Client OK, bucket=' + S3_BUCKET + ', region=' + (process.env.AWS_REGION || 'us-east-1'));
+} catch (e) {
+  console.warn('[S3] Client init failed: ' + e.message);
+}
+
+// ===== BytePlus VOD adapter (hand-written AWS4-HMAC-SHA256 signing) =====
 class BytePlusVodAdapter {
   constructor() {
     const ak = process.env.BYTEPLUS_ACCESS_KEY_ID || '';
@@ -68,7 +88,6 @@ class BytePlusVodAdapter {
   // AWS4-HMAC-SHA256 request signing
   _sign(method, path, queryObj, headerObj) {
     const now = new Date();
-    // YYYYMMDDTHHMMSSZ (BasicDateTimeFormat per AWS4 spec)
     const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
     const dateStamp = amzDate.slice(0, 8);
 
@@ -122,7 +141,6 @@ class BytePlusVodAdapter {
       const method = 'GET';
       const path = '/';
 
-      // X-Date is filled by _sign; placeholder for header list
       const headerObj = {
         'Host': this.host,
         'X-Account-Id': this.accountId,
@@ -173,7 +191,7 @@ class BytePlusVodAdapter {
   }
 }
 
-// Init adapter at module load. If it fails, fall back to original videoUrl for all episodes.
+// Init BytePlus adapter at module load. If it fails, all episodes fall back to S3 presigned.
 let vodAdapter = null;
 try {
   vodAdapter = new BytePlusVodAdapter();
@@ -182,9 +200,10 @@ try {
     + ', region=' + vodAdapter.region);
 } catch (e) {
   console.warn('[BytePlus] Adapter init failed: ' + e.message);
-  console.warn('[BytePlus] Will fall back to original videoUrl for all episodes');
+  console.warn('[BytePlus] Will fall back to S3 presigned URL for all episodes');
 }
 
+// ===== Route: list episodes for a drama, with BytePlus or S3 fallback =====
 router.get('/episodes/:dramaId', async (req, res) => {
   const { dramaId } = req.params;
   const prisma = req.prisma;
@@ -194,11 +213,10 @@ router.get('/episodes/:dramaId', async (req, res) => {
   }
 
   try {
-    // Only query fields we know exist. Episode table fields:
-    //   id, dramaId, episodeNumber, videoUrl, byteplusVid, createdAt, updatedAt
-    // (no title / duration / sourceType per current schema)
+    // Episode table fields (from schema.prisma): id, dramaId, episodeNumber, s3Key, durationSec, createdAt
+    // byteplusVid was added later via ALTER TABLE
     const episodes = await prisma.$queryRawUnsafe(
-      'SELECT e."episodeNumber", e."videoUrl", e."byteplusVid" '
+      'SELECT e."episodeNumber", e."s3Key", e."byteplusVid" '
       + 'FROM "Episode" e '
       + 'WHERE e."dramaId" = $1 '
       + 'ORDER BY e."episodeNumber" ASC',
@@ -212,10 +230,11 @@ router.get('/episodes/:dramaId', async (req, res) => {
     const enriched = await Promise.all(episodes.map(async (ep) => {
       const out = {
         episodeNumber: ep.episodeNumber,
-        videoUrl: ep.videoUrl,
-        source: 'cloudfront'
+        videoUrl: null,
+        source: 'pending'
       };
 
+      // 1) Try BytePlus first (only if byteplusVid is set and adapter is ready)
       if (ep.byteplusVid && vodAdapter) {
         try {
           const bp = await vodAdapter.getPlayInfo(ep.byteplusVid);
@@ -225,11 +244,24 @@ router.get('/episodes/:dramaId', async (req, res) => {
             if (mainUrl) {
               out.videoUrl = mainUrl;
               out.source = 'byteplus';
+              return out;
             }
           }
         } catch (e) {
           console.warn('[BytePlus] ep ' + ep.episodeNumber + ' getPlayInfo failed: ' + e.message);
-          out.source = 'byteplus-fallback';
+        }
+      }
+
+      // 2) Fall back to S3 presigned URL (7 days, same as play-auth route)
+      if (ep.s3Key && s3) {
+        try {
+          const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: ep.s3Key });
+          const signedUrl = await getSignedUrl(s3, cmd, { expiresIn: S3_SIGN_TTL });
+          out.videoUrl = signedUrl;
+          out.source = 's3-presigned';
+        } catch (e) {
+          console.warn('[S3] ep ' + ep.episodeNumber + ' presign failed: ' + e.message);
+          out.source = 's3-failed';
         }
       }
 
