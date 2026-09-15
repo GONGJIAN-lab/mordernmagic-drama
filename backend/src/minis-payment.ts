@@ -184,7 +184,7 @@ router.post('/ad-unlock', async (req: Request, res: Response) => {
     drama_slug: drama.slug,
     episode_id: episode.id,
     episode_number: episode.episodeNumber,
-    type: 'ad_unlock',
+    unlockType: 'ad_unlock',
   };
   const attachJson = buildAttach(attach);
 
@@ -209,14 +209,15 @@ router.post('/ad-unlock', async (req: Request, res: Response) => {
 
   await prisma.userUnlock.upsert({
     where: {
-      openId_dramaId_episodeId_type: {
-        openId, dramaId: drama.id, episodeId: episode.id, type: 'ad_unlock',
+      openId_skuId_orderId: {
+        openId, skuId, orderId,
       },
     },
     create: {
-      openId, dramaId: drama.id, episodeId: episode.id,
-      type: 'ad_unlock',
-      source: adUnitId,
+      openId, skuId, orderId,
+      dramaId: drama.id,
+      episodeId: episode.id,
+      unlockType: 'ad_unlock',
     },
     update: {},
   });
@@ -238,7 +239,7 @@ router.get('/unlock-status/:openId', async (req: Request, res: Response) => {
   if (!openId) return res.status(400).json({ ok: false, error: 'openId required' });
 
   const fullSeriesUnlocks = await prisma.userUnlock.findMany({
-    where: { openId, type: 'full_series' },
+    where: { openId, unlockType: 'full_series' },
   });
 
   let episodeUnlocked = false;
@@ -267,7 +268,7 @@ router.get('/unlock-status/:openId', async (req: Request, res: Response) => {
             openId,
             dramaId: drama.id,
             episodeId: episode.id,
-            type: { in: ['single_episode', 'ad_unlock'] },
+            unlockType: { in: ['single_episode', 'ad_unlock'] },
           },
         });
         episodeUnlocked = !!epUnlock;
