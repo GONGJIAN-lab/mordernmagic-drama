@@ -16,6 +16,8 @@ import { PrismaClient } from '@prisma/client';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createTikTokWebhookRouter } from './webhook/tiktok';
+import minisWebhookRouter from './minis-webhook';
+import minisPaymentRouter from './minis-payment';
 import { createPrismaAdapter } from './webhook/prisma-adapter';
 
 const s3 = new S3Client({
@@ -121,6 +123,10 @@ app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async
 
 // ===== TikTok Minis Webhook (MUST be before express.json()) =====
 app.use('/webhook/tiktok', express.raw({ type: 'application/json' }));
+
+// BIG STAR Drama v1.3 — Minis webhook (raw body, MUST before express.json)
+app.use('/api/minis/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/minis/webhook', minisWebhookRouter);
 const tiktokDbAdapter = createPrismaAdapter({ prisma });
 app.use(
   '/webhook',
@@ -143,6 +149,9 @@ app.use(express.json());
 app.use((req, _res, next) => { (req as any).prisma = prisma; next(); });
 app.use((req: any, _res: any, next: any) => { req.prisma = prisma; next(); });
 app.use('/api', require('./byteplus-routes'));
+
+// BIG STAR Drama v1.3 — IAP / IAA routes (uses global express.json)
+app.use('/api/minis', minisPaymentRouter);
 
 // ===== Health Check =====
 app.get('/health', (_req, res) => {
