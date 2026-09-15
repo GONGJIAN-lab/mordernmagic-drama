@@ -3,7 +3,7 @@ import { verifyWebhookSignature } from './webhook/signature';
 
 const router = Router();
 
-router.post('/webhook', async (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response) => {
   const prisma = (req as any).prisma;
 
   // 1) 验签
