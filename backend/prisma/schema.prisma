@@ -88,20 +88,25 @@ model WebhookEvent {
 
 model MinisOrder {
   id          String    @id @default(uuid())
-  orderId     String    @unique @map("order_id")
+  orderId     String    @map("order_id")
   outOrderNo  String?   @map("out_order_no")
   openId      String    @map("open_id")
   skuId       String    @map("sku_id")
+  skuType     String    @default("single_episode") @map("sku_type")
+  dramaId     String?   @map("drama_id")
+  episodeId   String?   @map("episode_id")
   quantity    Int       @default(1)
   totalAmount Int       @map("total_amount")
   currency    String    @default("USD")
   status      String
   payTime     DateTime? @map("pay_time")
+  paidAt      DateTime? @map("paid_at")
   attach      String?   @db.Text
   failReason  String?   @map("fail_reason")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
+  @@unique([openId, skuId, orderId])
   @@index([orderId])
   @@index([openId])
   @@index([status])
@@ -144,3 +149,5 @@ model UserUnlock {
   @@index([dramaId])
   @@map("user_unlocks")
 }
+
+// BIG STAR Drama v1.3 — Minis payment (added 2026-09-15)
