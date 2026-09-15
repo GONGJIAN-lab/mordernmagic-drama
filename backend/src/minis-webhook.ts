@@ -74,7 +74,7 @@ router.post('/', async (req: Request, res: Response) => {
               skuId: order.skuId,
               orderId: order.orderId,
               dramaId: drama_id || null,
-              episodeId,
+              episodeId: episode_id || null,
               unlockType: 'iap_single',
             },
           });
