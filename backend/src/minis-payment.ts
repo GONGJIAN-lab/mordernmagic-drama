@@ -184,7 +184,7 @@ router.post('/ad-unlock', async (req: Request, res: Response) => {
     drama_slug: drama.slug,
     episode_id: episode.id,
     episode_number: episode.episodeNumber,
-    unlockType: 'ad_unlock',
+    type: 'ad_unlock',
   };
   const attachJson = buildAttach(attach);
 
