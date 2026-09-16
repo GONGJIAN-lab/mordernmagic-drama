@@ -61,7 +61,13 @@ export function createPrismaAdapter(opts: PrismaAdapterOptions): WebhookDatabase
     // ============================================================
     async upsertOrder(order): Promise<void> {
       await prisma.minisOrder.upsert({
-        where: { orderId: order.orderId },
+        where: {
+          openId_skuId_orderId: {
+            openId: order.openId,
+            skuId: order.skuId,
+            orderId: order.orderId,
+          },
+        },
         create: {
           orderId: order.orderId,
           outOrderNo: order.outOrderNo,
