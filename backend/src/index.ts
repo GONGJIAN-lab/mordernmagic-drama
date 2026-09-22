@@ -251,7 +251,7 @@ app.get('/api/dramas/:slug', async (req, res, next) => {
       where: { slug: req.params.slug },
       include: {
         episodes: {
-          select: { id: true, episodeNumber: true, s3Key: true, durationSec: true },
+          select: { id: true, episodeNumber: true, s3Key: true, durationSec: true, byteplusVid: true },
           orderBy: { episodeNumber: 'asc' },
         },
       },
@@ -279,7 +279,7 @@ app.get('/api/dramas/:slug/episodes', async (req, res, next) => {
     }
     const episodes = await prisma.episode.findMany({
       where: { dramaId: drama.id },
-      select: { id: true, episodeNumber: true, s3Key: true, durationSec: true },
+      select: { id: true, episodeNumber: true, s3Key: true, durationSec: true, byteplusVid: true },
       orderBy: { episodeNumber: 'asc' },
     });
     res.data(episodes);
