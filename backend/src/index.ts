@@ -70,6 +70,15 @@ function errorHandler(err: any, _req: Request, res: Response, _next: NextFunctio
 
 // ===== CORS =====
 app.use(cors({ origin: '*' }));  // ⚠️ 审核期临时通配, 上线前改回 FRONTEND_URL
+
+
+// === /api/v1 → /api 兼容层（TikTok minis 用绝对路径 /api/v1） ===
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api/v1')) {
+    req.url = req.url.replace(/^\/api\/v1/, '/api');
+  }
+  next();
+});
 app.get('/', (_req, res) => res.json({ status: 'ok' }));  // ⚠️ Railway health check 探 /, 不加 deploy failed
 app.use((req, res, next) => {
   res.data = (payload) => res.json({ data: payload });
@@ -132,7 +141,7 @@ app.use(
   '/webhook',
   createTikTokWebhookRouter({
     signature: {
-      secret: process.env.TIKTOK_WEBHOOK_SECRET || '',
+      secret: process.env.BIGSTAR_WEBHOOK_SECRET || process.env.TIKTOK_WEBHOOK_SECRET || '',
       clientKey: process.env.TIKTOK_CLIENT_KEY || '',
       headerName: 'tiktok-signature',
       algorithm: 'tiktok-minis',
@@ -376,7 +385,7 @@ app.post('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, re
 });
 
 // ===== Error handler (must be last) =====
-app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
+app.get('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
   try {
     const { slug, episodeNumber } = req.params;
     const ep = await prisma.episode.findFirst({
