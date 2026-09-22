@@ -22,7 +22,7 @@ exports.createPrismaAdapter = createPrismaAdapter;
  *   const dbAdapter = createPrismaAdapter({ prisma });
  *
  *   app.use('/webhook', createTikTokWebhookRouter({
- *     signature: { secret: process.env.TIKTOK_WEBHOOK_SECRET! },
+ *     signature: { secret: process.env.BIGSTAR_WEBHOOK_SECRET || process.env.TIKTOK_WEBHOOK_SECRET! },
  *     db: dbAdapter,
  *   }));
  */
@@ -53,7 +53,13 @@ function createPrismaAdapter(opts) {
         // ============================================================
         async upsertOrder(order) {
             await prisma.minisOrder.upsert({
-                where: { orderId: order.orderId },
+                where: {
+                    openId_skuId_orderId: {
+                        openId: order.openId,
+                        skuId: order.skuId,
+                        orderId: order.orderId,
+                    },
+                },
                 create: {
                     orderId: order.orderId,
                     outOrderNo: order.outOrderNo,

@@ -13,6 +13,8 @@ const client_1 = require("@prisma/client");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const s3_request_presigner_1 = require("@aws-sdk/s3-request-presigner");
 const tiktok_1 = require("./webhook/tiktok");
+const minis_webhook_1 = __importDefault(require("./minis-webhook"));
+const minis_payment_1 = __importDefault(require("./minis-payment"));
 const prisma_adapter_1 = require("./webhook/prisma-adapter");
 const s3 = new client_s3_1.S3Client({
     region: process.env.AWS_REGION || 'us-east-1',
@@ -53,6 +55,13 @@ function errorHandler(err, _req, res, _next) {
 }
 // ===== CORS =====
 app.use((0, cors_1.default)({ origin: '*' })); // ⚠️ 审核期临时通配, 上线前改回 FRONTEND_URL
+// === /api/v1 → /api 兼容层（TikTok minis 用绝对路径 /api/v1） ===
+app.use((req, _res, next) => {
+    if (req.url.startsWith('/api/v1')) {
+        req.url = req.url.replace(/^\/api\/v1/, '/api');
+    }
+    next();
+});
 app.get('/', (_req, res) => res.json({ status: 'ok' })); // ⚠️ Railway health check 探 /, 不加 deploy failed
 app.use((req, res, next) => {
     res.data = (payload) => res.json({ data: payload });
@@ -101,10 +110,13 @@ app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json'
 });
 // ===== TikTok Minis Webhook (MUST be before express.json()) =====
 app.use('/webhook/tiktok', express_1.default.raw({ type: 'application/json' }));
+// BIG STAR Drama v1.3 — Minis webhook (raw body, MUST before express.json)
+app.use('/api/minis/webhook', express_1.default.raw({ type: 'application/json' }));
+app.use('/api/minis/webhook', minis_webhook_1.default);
 const tiktokDbAdapter = (0, prisma_adapter_1.createPrismaAdapter)({ prisma });
 app.use('/webhook', (0, tiktok_1.createTikTokWebhookRouter)({
     signature: {
-        secret: process.env.TIKTOK_WEBHOOK_SECRET || '',
+        secret: process.env.BIGSTAR_WEBHOOK_SECRET || process.env.TIKTOK_WEBHOOK_SECRET || '',
         clientKey: process.env.TIKTOK_CLIENT_KEY || '',
         headerName: 'tiktok-signature',
         algorithm: 'tiktok-minis',
@@ -119,6 +131,9 @@ app.use(express_1.default.json());
 app.use((req, _res, next) => { req.prisma = prisma; next(); });
 app.use((req, _res, next) => { req.prisma = prisma; next(); });
 app.use('/api', require('./byteplus-routes'));
+const { vodAdapter: byteplusVodAdapter } = require('./byteplus-routes');
+// BIG STAR Drama v1.3 — IAP / IAA routes (uses global express.json)
+app.use('/api/minis', minis_payment_1.default);
 // ===== Health Check =====
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
@@ -327,37 +342,79 @@ app.post('/api/watch-history', requireAuth, async (req, res, next) => {
     }
 });
 // ===== Error handler (must be last) =====
-app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
-    try {
-        const { slug, episodeNumber } = req.params;
-        const ep = await prisma.episode.findFirst({
-            where: { drama: { slug }, episodeNumber: Number(episodeNumber) },
+app.get('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
+  try {
+    const { slug, episodeNumber } = req.params;
+    const ep = await prisma.episode.findFirst({
+      where: { drama: { slug }, episodeNumber: Number(episodeNumber) },
+    });
+    if (!ep) return res.status(404).json({ error: 'episode not found' });
+
+    let playUrl = null;
+    let subtitleUrl = null;
+    let subtitleFormat = 'srt';
+    let subtitleLang = 'en';
+    let source = 'pending';
+
+    if (ep.byteplusVid && byteplusVodAdapter) {
+      try {
+        const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
+        const pi = bp && bp.Result && bp.Result.PlayInfoList && bp.Result.PlayInfoList[0];
+        if (pi) {
+          playUrl = pi.MainPlayUrl || pi.PlayUrl;
+          const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
+          const enSub = subs.find((s) =>
+            (s.Language || s.Lang || '').toLowerCase().startsWith('en')
+          ) || subs[0];
+          if (enSub) {
+            subtitleUrl = enSub.SubtitleUrl || enSub.Url;
+            subtitleFormat = enSub.Format || 'srt';
+            subtitleLang = enSub.Language || enSub.Lang || 'en';
+          }
+          source = 'byteplus';
+        }
+      } catch (e) {
+        console.warn('[play-auth] BytePlus failed:', e.message);
+      }
+    }
+
+    if (!playUrl && ep.s3Key) {
+      try {
+        const cmd = new GetObjectCommand({
+          Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+          Key: ep.s3Key,
         });
-        if (!ep)
-            return res.status(404).json({ error: 'episode not found' });
-        const cmd = new client_s3_1.GetObjectCommand({
+        playUrl = await getSignedUrl(s3, cmd, { expiresIn: 604800 });
+        source = 's3-presigned';
+      } catch (e) {
+        console.warn('[play-auth] S3 presign failed:', e.message);
+      }
+    }
+
+    if (!subtitleUrl) {
+      const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+      try {
+        subtitleUrl = await getSignedUrl(
+          s3,
+          new GetObjectCommand({
             Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-            Key: ep.s3Key,
-        });
-        const playUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, cmd, { expiresIn: 604800 });
-        // ===== 追加：字幕 Signed URL =====
-        const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
-        let subtitleUrl = null;
-        try {
-            subtitleUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({
-                Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-                Key: subtitleS3Key,
-            }), { expiresIn: 300 });
-        }
-        catch (e) {
-            console.log('Subtitle not found for key:', subtitleS3Key);
-        }
-        // ===== 追加结束 =====
-        res.data({ playUrl, subtitleUrl, subtitleFormat: 'srt', subtitleLang: 'en' });
+            Key: subtitleS3Key,
+          }),
+          { expiresIn: 300 }
+        );
+      } catch (e) {
+        console.log('Subtitle not found for key:', subtitleS3Key);
+      }
     }
-    catch (e) {
-        next(e);
+
+    if (!playUrl) {
+      return res.status(500).json({ error: 'no video source', source });
     }
+
+    res.data({ playUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
+  } catch (e) {
+    next(e);
+  }
 });
 app.use(errorHandler);
 const PORT = process.env.PORT || 3000;

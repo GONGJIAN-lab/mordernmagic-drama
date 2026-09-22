@@ -305,6 +305,64 @@ router.get('/episodes/:dramaId', async (req, res) => {
   }
 });
 
+  listMedia(spaceName, pageSize = 50) {
+    return new Promise((resolve, reject) => {
+      const queryObj = {
+        Action: 'ListMedia',
+        Version: VOD_VERSION,
+        SpaceName: spaceName,
+        PageSize: String(pageSize),
+        PageNum: '1',
+      };
+      const method = 'GET';
+      const path = '/';
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+      const headerObj = {
+        'Host': this.host,
+        'Content-Type': CONTENT_TYPE,
+        'X-Content-Sha256': EMPTY_BODY_SHA256,
+        'X-Date': amzDate,
+      };
+      const { authorization } = this._sign(method, path, queryObj, headerObj, amzDate);
+      const queryStr = Object.keys(queryObj).sort()
+        .map(k => this._uriEncode(k) + '=' + this._uriEncode(queryObj[k]))
+        .join(AMP);
+      const options = {
+        hostname: this.host,
+        port: 443,
+        path: path + '?' + queryStr,
+        method,
+        headers: {
+          'Host': this.host,
+          'Content-Type': CONTENT_TYPE,
+          'X-Content-Sha256': EMPTY_BODY_SHA256,
+          'X-Date': amzDate,
+          'Authorization': authorization,
+        },
+      };
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.ResponseMetadata && json.ResponseMetadata.Error) {
+              reject(new Error('BytePlus API error: ' + json.ResponseMetadata.Error.Code + ' - ' + json.ResponseMetadata.Error.Message));
+            } else {
+              resolve(json.Result?.MediaInfoList || []);
+            }
+          } catch (e) {
+            reject(new Error('BytePlus response parse error: ' + e.message + ', data: ' + data.slice(0, 500)));
+          }
+        });
+      });
+      req.on('error', (e) => reject(e));
+      req.setTimeout(15000, () => { req.destroy(new Error('BytePlus request timeout')); });
+      req.end();
+    });
+  }
+
 // ===== Debug endpoint: list all dramas + episode byteplusVid fill status =====
 // Purpose: from Railway logs/curl, identify dramaId and see which episodes
 // have byteplusVid populated (i.e. already uploaded to BytePlus VOD).
@@ -381,3 +439,4 @@ setImmediate(async () => {
 });
 
 module.exports = router;
+module.exports.vodAdapter = vodAdapter;

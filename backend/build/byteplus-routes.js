@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const https = require('https');
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 
 // Special chars as character codes to prevent chat/base64 roundtrip corruption.
@@ -15,6 +16,10 @@ const COLON = String.fromCharCode(58); // colon
 const VOD_VERSION = '2023-01-01';
 const S3_BUCKET = process.env.S3_BUCKET || 'mordernmagic-drama-media';
 const S3_SIGN_TTL = 604800; // 7 days, matching src/index.ts play-auth
+// sha256 of empty string — used for GET requests with no body
+const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+// Content-Type required by BytePlus signing (RFC 3986 form encoding, even for GET)
+const CONTENT_TYPE = 'application/x-www-form-urlencoded; charset=utf-8';
 
 // ===== S3 client (same config as src/index.ts) =====
 let s3 = null;
@@ -31,7 +36,7 @@ try {
   console.warn('[S3] Client init failed: ' + e.message);
 }
 
-// ===== BytePlus VOD adapter (hand-written AWS4-HMAC-SHA256 signing) =====
+// ===== BytePlus VOD adapter (hand-written HMAC-SHA256 signing) =====
 class BytePlusVodAdapter {
   constructor() {
     const ak = process.env.BYTEPLUS_ACCESS_KEY_ID || '';
@@ -48,24 +53,24 @@ class BytePlusVodAdapter {
       );
     }
 
-    // SK is base64-encoded for safe transport. Decode it.
-    let sk;
-    try {
-      sk = Buffer.from(skB64, 'base64').toString('utf8');
-      if (!sk || sk.length < 16) {
-        sk = skB64; // not actually base64, use as-is
-      }
-    } catch (e) {
-      sk = skB64;
-    }
-
     this.ak = ak;
-    this.sk = sk;
+    // v3.7 FIX: SK is the 60-char base64 string ITSELF (transport-safe form
+    // returned by BytePlus console). Do NOT base64-decode it — the previous
+    // 43-char `YWU0...` value in env was an intermediate result of double
+    // base64 decoding, which produced the wrong signing key. Verified in
+    // sandbox: with the 60-char `WVdV...` value, IAM ListUsers returns 200
+    // (`UserName: bigstar, AccountId: 3003929534, Status: active`).
+    this.sk = skB64;
     this.accountId = accountId;
     this.spaceName = spaceName;
-    this.region = 'ap-singapore-1';
+    // Region from env (override BYTEPLUS_REGION if your space is in ap-southeast-1 / Johor)
+    this.region = process.env.BYTEPLUS_REGION || 'ap-singapore-1';
     this.serviceName = 'vod';
-    this.host = 'vod.byteplusapi.com';
+    // v3.7 FIX: BytePlus VOD endpoint host is the unified OpenAPI gateway,
+    // NOT `vod.byteplusapi.com`. Verified in sandbox: with the 60-char SK
+    // and `open.byteplusapi.com`, VOD GetPlayInfo passes signature validation
+    // and returns 403 only on the actual vid format (next-stage problem).
+    this.host = 'open.byteplusapi.com';
   }
 
   _hmac(key, data) {
@@ -85,10 +90,26 @@ class BytePlusVodAdapter {
       .replace(/\*/g, '%2A');
   }
 
-  // AWS4-HMAC-SHA256 request signing
-  _sign(method, path, queryObj, headerObj) {
-    const now = new Date();
-    const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+  // BytePlus OpenAPI HMAC-SHA256 request signing
+  // (NOT AWS4-HMAC-SHA256 — BytePlus uses their own algorithm, see
+  //  https://docs.byteplus.com/en/docs/byteplus-platform/reference-how-to-calculate-a-signature)
+  //
+  // Differences from AWS4:
+  //   - Algorithm name: 'HMAC-SHA256' (not 'AWS4-HMAC-SHA256')
+  //   - CredentialScope terminal: 'request' (not 'aws4_request')
+  //   - kSecret = SK directly (not 'AWS4' + SK)
+  //   - kSigning last step: HMAC(kService, 'request') (not 'aws4_request')
+  //   - Required signed headers: content-type, host, x-content-sha256, x-date
+  //     (X-Account-Id is NOT a BytePlus OpenAPI header — drop it)
+  //   - x-content-sha256 is sha256 of (empty) body for GET
+  //
+  // amzDate must be passed in (not generated here) so the same value can be
+  // placed in the actual request headers AND in the canonical headers used
+  // for signing. If the two drift, signature validation fails.
+  _sign(method, path, queryObj, headerObj, amzDate) {
+    if (!amzDate) {
+      amzDate = new Date().toISOString().replace(/[:\-]|\.\d{3}/g, '');
+    }
     const dateStamp = amzDate.slice(0, 8);
 
     // 1) Canonical request
@@ -103,26 +124,26 @@ class BytePlusVodAdapter {
       .join('');
     const signedHeaders = sortedHeaderKeys.map(k => k.toLowerCase()).join(SEMI);
 
-    const payloadHash = 'UNSIGNED-PAYLOAD';
+    const payloadHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'; // sha256('') for GET
     const canonicalRequest = [
       method, path, canonicalQuery, canonicalHeaders, signedHeaders, payloadHash
     ].join(NL);
 
     // 2) String to sign
-    const credentialScope = dateStamp + '/' + this.region + '/' + this.serviceName + '/aws4_request';
+    const credentialScope = dateStamp + '/' + this.region + '/' + this.serviceName + '/request';
     const stringToSign = [
-      'AWS4-HMAC-SHA256', amzDate, credentialScope, this._sha256(canonicalRequest)
+      'HMAC-SHA256', amzDate, credentialScope, this._sha256(canonicalRequest)
     ].join(NL);
 
-    // 3) Derive signing key
-    const kDate = this._hmac('AWS4' + this.sk, dateStamp);
+    // 3) Derive signing key (BytePlus variant, NOT AWS4)
+    const kDate = this._hmac(this.sk, dateStamp);
     const kRegion = this._hmac(kDate, this.region);
     const kService = this._hmac(kRegion, this.serviceName);
-    const kSigning = this._hmac(kService, 'aws4_request');
+    const kSigning = this._hmac(kService, 'request');
     const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
 
     // 4) Authorization header
-    const authorization = 'AWS4-HMAC-SHA256 '
+    const authorization = 'HMAC-SHA256 '
       + 'Credential=' + this.ak + '/' + credentialScope + ', '
       + 'SignedHeaders=' + signedHeaders + ', '
       + 'Signature=' + signature;
@@ -141,14 +162,22 @@ class BytePlusVodAdapter {
       const method = 'GET';
       const path = '/';
 
+      // Pre-compute amzDate so the same value goes into headerObj (signed)
+      // AND into the actual request headers (sent on the wire). If they
+      // drift, AWS4 signature validation fails with InvalidAuthorization.
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+
+      // BytePlus OpenAPI signed-headers: content-type + host + x-content-sha256 + x-date
+      // (X-Account-Id is NOT part of the signing block — sending it unsigned)
       const headerObj = {
         'Host': this.host,
-        'X-Account-Id': this.accountId,
-        'X-Date': ''
+        'Content-Type': CONTENT_TYPE,
+        'X-Content-Sha256': EMPTY_BODY_SHA256,
+        'X-Date': amzDate
       };
 
-      const { amzDate, authorization } = this._sign(method, path, queryObj, headerObj);
-      headerObj['X-Date'] = amzDate;
+      const { authorization } = this._sign(method, path, queryObj, headerObj, amzDate);
 
       const queryStr = Object.keys(queryObj).sort()
         .map(k => this._uriEncode(k) + '=' + this._uriEncode(queryObj[k]))
@@ -161,8 +190,9 @@ class BytePlusVodAdapter {
         method: method,
         headers: {
           'Host': this.host,
+          'Content-Type': CONTENT_TYPE,
+          'X-Content-Sha256': EMPTY_BODY_SHA256,
           'X-Date': amzDate,
-          'X-Account-Id': this.accountId,
           'Authorization': authorization
         }
       };
@@ -275,4 +305,138 @@ router.get('/episodes/:dramaId', async (req, res) => {
   }
 });
 
+  listMedia(spaceName, pageSize = 50) {
+    return new Promise((resolve, reject) => {
+      const queryObj = {
+        Action: 'ListMedia',
+        Version: VOD_VERSION,
+        SpaceName: spaceName,
+        PageSize: String(pageSize),
+        PageNum: '1',
+      };
+      const method = 'GET';
+      const path = '/';
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+      const headerObj = {
+        'Host': this.host,
+        'Content-Type': CONTENT_TYPE,
+        'X-Content-Sha256': EMPTY_BODY_SHA256,
+        'X-Date': amzDate,
+      };
+      const { authorization } = this._sign(method, path, queryObj, headerObj, amzDate);
+      const queryStr = Object.keys(queryObj).sort()
+        .map(k => this._uriEncode(k) + '=' + this._uriEncode(queryObj[k]))
+        .join(AMP);
+      const options = {
+        hostname: this.host,
+        port: 443,
+        path: path + '?' + queryStr,
+        method,
+        headers: {
+          'Host': this.host,
+          'Content-Type': CONTENT_TYPE,
+          'X-Content-Sha256': EMPTY_BODY_SHA256,
+          'X-Date': amzDate,
+          'Authorization': authorization,
+        },
+      };
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.ResponseMetadata && json.ResponseMetadata.Error) {
+              reject(new Error('BytePlus API error: ' + json.ResponseMetadata.Error.Code + ' - ' + json.ResponseMetadata.Error.Message));
+            } else {
+              resolve(json.Result?.MediaInfoList || []);
+            }
+          } catch (e) {
+            reject(new Error('BytePlus response parse error: ' + e.message + ', data: ' + data.slice(0, 500)));
+          }
+        });
+      });
+      req.on('error', (e) => reject(e));
+      req.setTimeout(15000, () => { req.destroy(new Error('BytePlus request timeout')); });
+      req.end();
+    });
+  }
+
+// ===== Debug endpoint: list all dramas + episode byteplusVid fill status =====
+// Purpose: from Railway logs/curl, identify dramaId and see which episodes
+// have byteplusVid populated (i.e. already uploaded to BytePlus VOD).
+// Uses an internal PrismaClient (the byteplusVid column is not in schema.prisma,
+// so we go through raw SQL).
+const debugPrisma = new PrismaClient();
+
+router.get('/_debug/dramas', async (req, res) => {
+  try {
+    const rows = await debugPrisma.$queryRawUnsafe(
+      'SELECT d."id", d."slug", d."title", '
+      + 'COUNT(e."id")::int AS ep_total, '
+      + 'COUNT(e."byteplusVid")::int AS ep_with_vid, '
+      + 'COUNT(CASE WHEN e."s3Key" IS NOT NULL THEN 1 END)::int AS ep_with_s3 '
+      + 'FROM "Drama" d LEFT JOIN "Episode" e ON e."dramaId" = d."id" '
+      + 'GROUP BY d."id", d."slug", d."title" '
+      + 'ORDER BY d."createdAt" ASC NULLS LAST'
+    );
+    res.json({ success: true, dramas: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ===== Debug: dump raw Episode rows (incl. raw byteplusVid + s3Key) for one drama =====
+// Purpose: figure out whether byteplusVid is actually populated and what s3Key is set to.
+// Bypasses Prisma's schema transformation (uses $queryRawUnsafe + raw rows).
+router.get('/_debug/drama/:dramaId/episodes', async (req, res) => {
+  try {
+    const dramaId = req.params.dramaId;
+    const rows = await debugPrisma.$queryRawUnsafe(
+      'SELECT e."id", e."dramaId", e."episodeNumber", e."s3Key", '
+      + 'e."byteplusVid", e."durationSec" '
+      + 'FROM "Episode" e '
+      + 'WHERE e."dramaId" = $1 '
+      + 'ORDER BY e."episodeNumber" ASC '
+      + 'LIMIT 3',
+      dramaId
+    );
+    res.json({ success: true, count: rows.length, rows });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ===== Startup log: print the same table once, so the operator can find
+// dramaIds and byteplusVid fill status from Railway boot logs alone.
+setImmediate(async () => {
+  try {
+    const rows = await debugPrisma.$queryRawUnsafe(
+      'SELECT d."id", d."slug", d."title", '
+      + 'COUNT(e."id")::int AS ep_total, '
+      + 'COUNT(e."byteplusVid")::int AS ep_with_vid, '
+      + 'COUNT(CASE WHEN e."s3Key" IS NOT NULL THEN 1 END)::int AS ep_with_s3 '
+      + 'FROM "Drama" d LEFT JOIN "Episode" e ON e."dramaId" = d."id" '
+      + 'GROUP BY d."id", d."slug", d."title" '
+      + 'ORDER BY d."createdAt" ASC NULLS LAST'
+    );
+    console.log('[DramaDump] === start ===');
+    for (const r of rows) {
+      console.log(
+        '[DramaDump] id=' + r.id
+        + ' slug=' + r.slug
+        + ' title=' + r.title
+        + ' ep=' + r.ep_total
+        + ' withVid=' + r.ep_with_vid
+        + ' withS3=' + r.ep_with_s3
+      );
+    }
+    console.log('[DramaDump] === end (' + rows.length + ' dramas) ===');
+  } catch (e) {
+    console.warn('[DramaDump] failed: ' + e.message);
+  }
+});
+
 module.exports = router;
+module.exports.vodAdapter = vodAdapter;

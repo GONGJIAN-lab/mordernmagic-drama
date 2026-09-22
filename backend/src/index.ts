@@ -158,6 +158,7 @@ app.use(express.json());
 app.use((req, _res, next) => { (req as any).prisma = prisma; next(); });
 app.use((req: any, _res: any, next: any) => { req.prisma = prisma; next(); });
 app.use('/api', require('./byteplus-routes'));
+const { vodAdapter: byteplusVodAdapter } = require('../byteplus-routes');
 
 // BIG STAR Drama v1.3 — IAP / IAA routes (uses global express.json)
 app.use('/api/minis', minisPaymentRouter);
@@ -393,30 +394,70 @@ app.get('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, 
     });
     if (!ep) return res.status(404).json({ error: 'episode not found' });
 
-    const cmd = new GetObjectCommand({
-      Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-      Key: ep.s3Key,
-    });
-    const playUrl = await getSignedUrl(s3, cmd, { expiresIn: 604800 });
-
-    // ===== 追加：字幕 Signed URL =====
-    const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+    let playUrl: string | null = null;
     let subtitleUrl: string | null = null;
-    try {
-      subtitleUrl = await getSignedUrl(
-        s3,
-        new GetObjectCommand({
-          Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-          Key: subtitleS3Key,
-        }),
-        { expiresIn: 300 }
-      );
-    } catch (e) {
-      console.log('Subtitle not found for key:', subtitleS3Key);
-    }
-    // ===== 追加结束 =====
+    let subtitleFormat = 'srt';
+    let subtitleLang = 'en';
+    let source = 'pending';
 
-    res.data({ playUrl, subtitleUrl, subtitleFormat: 'srt', subtitleLang: 'en' });
+    // 1) BytePlus first
+    if (ep.byteplusVid && byteplusVodAdapter) {
+      try {
+        const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
+        const pi = bp?.Result?.PlayInfoList?.[0];
+        if (pi) {
+          playUrl = pi.MainPlayUrl || pi.PlayUrl;
+          const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
+          const enSub = subs.find((s: any) =>
+            (s.Language || s.Lang || '').toLowerCase().startsWith('en')
+          ) || subs[0];
+          if (enSub) {
+            subtitleUrl = enSub.SubtitleUrl || enSub.Url;
+            subtitleFormat = enSub.Format || 'srt';
+            subtitleLang = enSub.Language || enSub.Lang || 'en';
+          }
+          source = 'byteplus';
+        }
+      } catch (e: any) {
+        console.warn('[play-auth] BytePlus failed:', e.message);
+      }
+    }
+
+    // 2) S3 fallback
+    if (!playUrl && ep.s3Key) {
+      try {
+        const cmd = new GetObjectCommand({
+          Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+          Key: ep.s3Key,
+        });
+        playUrl = await getSignedUrl(s3, cmd, { expiresIn: 604800 });
+        source = 's3-presigned';
+      } catch (e: any) {
+        console.warn('[play-auth] S3 presign failed:', e.message);
+      }
+    }
+
+    if (!subtitleUrl) {
+      const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+      try {
+        subtitleUrl = await getSignedUrl(
+          s3,
+          new GetObjectCommand({
+            Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+            Key: subtitleS3Key,
+          }),
+          { expiresIn: 300 }
+        );
+      } catch (e) {
+        console.log('Subtitle not found for key:', subtitleS3Key);
+      }
+    }
+
+    if (!playUrl) {
+      return res.status(500).json({ error: 'no video source', source });
+    }
+
+    res.data({ playUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
   } catch (e: any) {
     next(e);
   }

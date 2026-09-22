@@ -8,8 +8,9 @@ router.post('/', async (req: Request, res: Response) => {
 
   // 1) 验签
   try {
-    verifyWebhookSignature(req.body, req.headers as any, {
-      secret: process.env.TIKTOK_WEBHOOK_SECRET || '',
+    const rawBody = (req as any).rawBody || (Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body)));
+    verifyWebhookSignature(rawBody, req.headers as any, {
+      secret: process.env.BIGSTAR_WEBHOOK_SECRET || process.env.TIKTOK_WEBHOOK_SECRET || '',
       clientKey: process.env.TIKTOK_APP_ID || '',
       headerName: 'tiktok-signature',
       algorithm: 'tiktok-minis',
