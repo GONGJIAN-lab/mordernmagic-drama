@@ -5,6 +5,7 @@ const p = new PrismaClient();
 (async () => {
   const medias = await vodAdapter.listMedia('bigstar-drama', 50);
   console.log(`Found ${medias.length} medias in bigstar-drama`);
+console.log('Sample:', JSON.stringify(medias.slice(0, 5).map(m => ({vid: m.BasicInfo?.Vid, title: m.BasicInfo?.Title}))));
 
   const byEp = {};
   for (const m of medias) {
