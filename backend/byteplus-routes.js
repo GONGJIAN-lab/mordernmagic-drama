@@ -219,18 +219,6 @@ class BytePlusVodAdapter {
       req.end();
     });
   }
-}
-
-// Init BytePlus adapter at module load. If it fails, all episodes fall back to S3 presigned.
-let vodAdapter = null;
-try {
-  vodAdapter = new BytePlusVodAdapter();
-  console.log('[BytePlus] Adapter OK, space=' + vodAdapter.spaceName
-    + ', account=' + vodAdapter.accountId
-    + ', region=' + vodAdapter.region);
-} catch (e) {
-  console.warn('[BytePlus] Adapter init failed: ' + e.message);
-  console.warn('[BytePlus] Will fall back to S3 presigned URL for all episodes');
   listMedia(spaceName, pageSize = 50) {
     return new Promise((resolve, reject) => {
       const queryObj = {
@@ -288,6 +276,19 @@ try {
       req.end();
     });
   }
+
+}
+
+// Init BytePlus adapter at module load. If it fails, all episodes fall back to S3 presigned.
+let vodAdapter = null;
+try {
+  vodAdapter = new BytePlusVodAdapter();
+  console.log('[BytePlus] Adapter OK, space=' + vodAdapter.spaceName
+    + ', account=' + vodAdapter.accountId
+    + ', region=' + vodAdapter.region);
+} catch (e) {
+  console.warn('[BytePlus] Adapter init failed: ' + e.message);
+  console.warn('[BytePlus] Will fall back to S3 presigned URL for all episodes');
 
 }
 
