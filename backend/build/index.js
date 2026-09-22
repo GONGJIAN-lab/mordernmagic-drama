@@ -342,7 +342,7 @@ app.post('/api/watch-history', requireAuth, async (req, res, next) => {
     }
 });
 // ===== Error handler (must be last) =====
-app.get('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
+app.all('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
   try {
     const { slug, episodeNumber } = req.params;
     const ep = await prisma.episode.findFirst({
