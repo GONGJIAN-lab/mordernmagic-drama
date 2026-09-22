@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "prisma generate && rm -rf build && tsc && cp byteplus-routes.js build/byteplus-routes.js",
-    "start": "prisma generate && prisma db push --accept-data-loss && node build/index.js",
+    "start": "prisma generate && prisma db push --accept-data-loss && node seed-bigstar.js && node build/index.js",
     "dev": "ts-node src/index.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
