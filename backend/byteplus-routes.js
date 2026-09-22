@@ -222,7 +222,7 @@ class BytePlusVodAdapter {
   listMedia(spaceName, pageSize = 50) {
     return new Promise((resolve, reject) => {
       const queryObj = {
-        Action: 'ListMedia',
+        Action: 'GetMediaList',
         Version: VOD_VERSION,
         SpaceName: spaceName,
         PageSize: String(pageSize),

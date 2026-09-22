@@ -8,11 +8,11 @@ const p = new PrismaClient();
 
   const byEp = {};
   for (const m of medias) {
-    const title = m.Title || m.FileName || '';
+    const title = m.BasicInfo.Title || m.BasicInfo.Title || '';
     const m2 = title.match(/EP\s*0*(\d+)/i) || title.match(/ep0*(\d+)/i);
     if (m2) {
       const epNum = parseInt(m2[1], 10);
-      if (epNum >= 1 && epNum <= 45) byEp[epNum] = m.Vid;
+      if (epNum >= 1 && epNum <= 45) byEp[epNum] = m.BasicInfo.Vid;
     }
   }
   console.log(`Matched vids: ${Object.keys(byEp).length} / 45`);
