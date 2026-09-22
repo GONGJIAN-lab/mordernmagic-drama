@@ -10,7 +10,7 @@ console.log('Sample:', JSON.stringify(medias.slice(0, 5).map(m => ({vid: m.Basic
   const byEp = {};
   for (const m of medias) {
     const title = m.BasicInfo.Title || m.BasicInfo.Title || '';
-    const m2 = title.match(/EP\s*0*(\d+)/i) || title.match(/ep0*(\d+)/i);
+    const m2 = title.match(/(\d+)\.mp4$/i) || title.match(/(\d+)\.mp4$/i);
     if (m2) {
       const epNum = parseInt(m2[1], 10);
       if (epNum >= 1 && epNum <= 45) byEp[epNum] = m.BasicInfo.Vid;
