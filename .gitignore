@@ -7,3 +7,10 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+
+# Build / HLS transcode artifacts (contain VOD API keys)
+backend/scripts/trigger-hls-transcode*.mjs
+backend/scripts/check-hls-result.mjs
+backend/scripts/list-workflows*.mjs
+backend/hls-transcode-runs-*.csv
+backend/backend/.secrets/

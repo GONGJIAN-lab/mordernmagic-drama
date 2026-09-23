@@ -131,7 +131,7 @@ app.use(express_1.default.json());
 app.use((req, _res, next) => { req.prisma = prisma; next(); });
 app.use((req, _res, next) => { req.prisma = prisma; next(); });
 app.use('/api', require('./byteplus-routes'));
-const { vodAdapter: byteplusVodAdapter } = require('./byteplus-routes');
+const { vodAdapter: byteplusVodAdapter } = require('../byteplus-routes');
 // BIG STAR Drama v1.3 — IAP / IAA routes (uses global express.json)
 app.use('/api/minis', minis_payment_1.default);
 // ===== Health Check =====
@@ -198,9 +198,22 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
 app.get('/api/dramas', async (_req, res, next) => {
     try {
         const dramas = await prisma.drama.findMany({
-            select: { slug: true, title: true, cover: true, totalEpisodes: true, priceCents: true },
+            select: { slug: true, title: true, cover: true, totalEpisodes: true, priceCents: true, coverByteplusVid: true },
             orderBy: { createdAt: 'desc' },
         });
+        // Refresh cover URLs from VOD if coverByteplusVid is set
+        for (const drama of dramas) {
+            if (drama.coverByteplusVid && byteplusVodAdapter) {
+                try {
+                    const url = await byteplusVodAdapter.getCoverUrl(drama.coverByteplusVid);
+                    if (url)
+                        drama.cover = url;
+                }
+                catch (e) {
+                    console.warn('[cover] ' + drama.slug + ' failed: ' + String(e));
+                }
+            }
+        }
         res.data(dramas);
     }
     catch (err) {
@@ -214,7 +227,7 @@ app.get('/api/dramas/:slug', async (req, res, next) => {
             where: { slug: req.params.slug },
             include: {
                 episodes: {
-                    select: { id: true, episodeNumber: true, s3Key: true, durationSec: true },
+                    select: { id: true, episodeNumber: true, s3Key: true, durationSec: true, byteplusVid: true },
                     orderBy: { episodeNumber: 'asc' },
                 },
             },
@@ -222,6 +235,17 @@ app.get('/api/dramas/:slug', async (req, res, next) => {
         if (!drama) {
             res.status(404).json({ error: 'Drama not found' });
             return;
+        }
+        // Refresh cover URL from VOD if coverByteplusVid is set
+        if (drama.coverByteplusVid && byteplusVodAdapter) {
+            try {
+                const url = await byteplusVodAdapter.getCoverUrl(drama.coverByteplusVid);
+                if (url)
+                    drama.cover = url;
+            }
+            catch (e) {
+                console.warn('[cover] ' + drama.slug + ' failed: ' + String(e));
+            }
         }
         res.data(drama);
     }
@@ -242,7 +266,7 @@ app.get('/api/dramas/:slug/episodes', async (req, res, next) => {
         }
         const episodes = await prisma.episode.findMany({
             where: { dramaId: drama.id },
-            select: { id: true, episodeNumber: true, s3Key: true, durationSec: true },
+            select: { id: true, episodeNumber: true, s3Key: true, durationSec: true, byteplusVid: true },
             orderBy: { episodeNumber: 'asc' },
         });
         res.data(episodes);
@@ -343,78 +367,73 @@ app.post('/api/watch-history', requireAuth, async (req, res, next) => {
 });
 // ===== Error handler (must be last) =====
 app.all('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
-  try {
-    const { slug, episodeNumber } = req.params;
-    const ep = await prisma.episode.findFirst({
-      where: { drama: { slug }, episodeNumber: Number(episodeNumber) },
-    });
-    if (!ep) return res.status(404).json({ error: 'episode not found' });
-
-    let playUrl = null;
-    let subtitleUrl = null;
-    let subtitleFormat = 'srt';
-    let subtitleLang = 'en';
-    let source = 'pending';
-
-    if (ep.byteplusVid && byteplusVodAdapter) {
-      try {
-        const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
-        const pi = bp && bp.Result && bp.Result.PlayInfoList && bp.Result.PlayInfoList[0];
-        if (pi) {
-          playUrl = pi.MainPlayUrl || pi.PlayUrl;
-          const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
-          const enSub = subs.find((s) =>
-            (s.Language || s.Lang || '').toLowerCase().startsWith('en')
-          ) || subs[0];
-          if (enSub) {
-            subtitleUrl = enSub.SubtitleUrl || enSub.Url;
-            subtitleFormat = enSub.Format || 'srt';
-            subtitleLang = enSub.Language || enSub.Lang || 'en';
-          }
-          source = 'byteplus';
-        }
-      } catch (e) {
-        console.warn('[play-auth] BytePlus failed:', e.message);
-      }
-    }
-
-    if (!playUrl && ep.s3Key) {
-      try {
-        const cmd = new GetObjectCommand({
-          Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-          Key: ep.s3Key,
+    try {
+        const { slug, episodeNumber } = req.params;
+        const ep = await prisma.episode.findFirst({
+            where: { drama: { slug }, episodeNumber: Number(episodeNumber) },
         });
-        playUrl = await getSignedUrl(s3, cmd, { expiresIn: 604800 });
-        source = 's3-presigned';
-      } catch (e) {
-        console.warn('[play-auth] S3 presign failed:', e.message);
-      }
+        if (!ep)
+            return res.status(404).json({ error: 'episode not found' });
+        let playUrl = null;
+        let subtitleUrl = null;
+        let subtitleFormat = 'srt';
+        let subtitleLang = 'en';
+        let source = 'pending';
+        // 1) BytePlus first
+        if (ep.byteplusVid && byteplusVodAdapter) {
+            try {
+                const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
+                const pi = bp?.Result?.PlayInfoList?.[0];
+                if (pi) {
+                    playUrl = pi.MainPlayUrl || pi.PlayUrl;
+                    const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
+                    const enSub = subs.find((s) => (s.Language || s.Lang || '').toLowerCase().startsWith('en')) || subs[0];
+                    if (enSub) {
+                        subtitleUrl = enSub.SubtitleUrl || enSub.Url;
+                        subtitleFormat = enSub.Format || 'srt';
+                        subtitleLang = enSub.Language || enSub.Lang || 'en';
+                    }
+                    source = 'byteplus';
+                }
+            }
+            catch (e) {
+                console.warn('[play-auth] BytePlus failed:', e.message);
+            }
+        }
+        // 2) S3 fallback
+        if (!playUrl && ep.s3Key) {
+            try {
+                const cmd = new client_s3_1.GetObjectCommand({
+                    Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+                    Key: ep.s3Key,
+                });
+                playUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, cmd, { expiresIn: 604800 });
+                source = 's3-presigned';
+            }
+            catch (e) {
+                console.warn('[play-auth] S3 presign failed:', e.message);
+            }
+        }
+        if (!subtitleUrl) {
+            const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+            try {
+                subtitleUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({
+                    Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+                    Key: subtitleS3Key,
+                }), { expiresIn: 300 });
+            }
+            catch (e) {
+                console.log('Subtitle not found for key:', subtitleS3Key);
+            }
+        }
+        if (!playUrl) {
+            return res.status(500).json({ error: 'no video source', source });
+        }
+        res.data({ playUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
     }
-
-    if (!subtitleUrl) {
-      const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
-      try {
-        subtitleUrl = await getSignedUrl(
-          s3,
-          new GetObjectCommand({
-            Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-            Key: subtitleS3Key,
-          }),
-          { expiresIn: 300 }
-        );
-      } catch (e) {
-        console.log('Subtitle not found for key:', subtitleS3Key);
-      }
+    catch (e) {
+        next(e);
     }
-
-    if (!playUrl) {
-      return res.status(500).json({ error: 'no video source', source });
-    }
-
-    res.data({ playUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
-  } catch (e) {
-    next(e);
-  }
 });
 app.use(errorHandler);
 const PORT = process.env.PORT || 3000;

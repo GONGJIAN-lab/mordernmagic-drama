@@ -29,6 +29,7 @@ model Drama {
   episodes      Episode[]
   orders        Order[]
   watchHistory  WatchHistory[]
+  coverByteplusVid  String?
 }
 
 model Episode {

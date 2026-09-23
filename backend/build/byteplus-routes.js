@@ -151,13 +151,14 @@ class BytePlusVodAdapter {
     return { amzDate, authorization };
   }
 
-  getPlayInfo(vid) {
+  getPlayInfo(vid, opts = {}) {
     return new Promise((resolve, reject) => {
       const queryObj = {
         Action: 'GetPlayInfo',
         Version: VOD_VERSION,
         SpaceName: this.spaceName,
-        Vid: vid
+        Vid: vid,
+        ...(opts.Ssl ? { Ssl: opts.Ssl } : {}),
       };
       const method = 'GET';
       const path = '/';
@@ -209,6 +210,24 @@ class BytePlusVodAdapter {
             } else {
               resolve(json);
             }
+
+  // Get a fresh signed URL for a drama cover image (Vid from Drama.coverByteplusVid).
+  // Uses Ssl='1' so BytePlus prefers HTTPS when CDN has SSL cert; otherwise HTTP.
+  // Both work in TikTok Minis WebView since video-cdn is allowListed.
+  async getCoverUrl(vid) {
+    if (!vid) return null;
+    try {
+      const bp = await this.getPlayInfo(vid, { Ssl: '1' });
+      if (bp && bp.Result && bp.Result.PlayInfoList && bp.Result.PlayInfoList.length > 0) {
+        const playInfo = bp.Result.PlayInfoList[0];
+        return playInfo.MainPlayUrl || playInfo.PlayUrl || null;
+      }
+    } catch (e) {
+      console.warn('[BytePlus] cover getPlayInfo failed for ' + vid + ': ' + e.message);
+    }
+    return null;
+  }
+
           } catch (e) {
             reject(new Error('BytePlus response parse error: ' + e.message + ', data: ' + data.slice(0, 500)));
           }
@@ -219,6 +238,64 @@ class BytePlusVodAdapter {
       req.end();
     });
   }
+  listMedia(spaceName, pageSize = 50) {
+    return new Promise((resolve, reject) => {
+      const queryObj = {
+        Action: 'GetMediaList',
+        Version: VOD_VERSION,
+        SpaceName: spaceName,
+        PageSize: String(pageSize),
+        PageNum: '1',
+      };
+      const method = 'GET';
+      const path = '/';
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+      const headerObj = {
+        'Host': this.host,
+        'Content-Type': CONTENT_TYPE,
+        'X-Content-Sha256': EMPTY_BODY_SHA256,
+        'X-Date': amzDate,
+      };
+      const { authorization } = this._sign(method, path, queryObj, headerObj, amzDate);
+      const queryStr = Object.keys(queryObj).sort()
+        .map(k => this._uriEncode(k) + '=' + this._uriEncode(queryObj[k]))
+        .join(AMP);
+      const options = {
+        hostname: this.host,
+        port: 443,
+        path: path + '?' + queryStr,
+        method,
+        headers: {
+          'Host': this.host,
+          'Content-Type': CONTENT_TYPE,
+          'X-Content-Sha256': EMPTY_BODY_SHA256,
+          'X-Date': amzDate,
+          'Authorization': authorization,
+        },
+      };
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.ResponseMetadata && json.ResponseMetadata.Error) {
+              reject(new Error('BytePlus API error: ' + json.ResponseMetadata.Error.Code + ' - ' + json.ResponseMetadata.Error.Message));
+            } else {
+              resolve(json.Result?.MediaInfoList || []);
+            }
+          } catch (e) {
+            reject(new Error('BytePlus response parse error: ' + e.message + ', data: ' + data.slice(0, 500)));
+          }
+        });
+      });
+      req.on('error', (e) => reject(e));
+      req.setTimeout(15000, () => { req.destroy(new Error('BytePlus request timeout')); });
+      req.end();
+    });
+  }
+
 }
 
 // Init BytePlus adapter at module load. If it fails, all episodes fall back to S3 presigned.
@@ -231,6 +308,7 @@ try {
 } catch (e) {
   console.warn('[BytePlus] Adapter init failed: ' + e.message);
   console.warn('[BytePlus] Will fall back to S3 presigned URL for all episodes');
+
 }
 
 // ===== Route: list episodes for a drama, with BytePlus or S3 fallback =====
@@ -305,63 +383,6 @@ router.get('/episodes/:dramaId', async (req, res) => {
   }
 });
 
-  listMedia(spaceName, pageSize = 50) {
-    return new Promise((resolve, reject) => {
-      const queryObj = {
-        Action: 'ListMedia',
-        Version: VOD_VERSION,
-        SpaceName: spaceName,
-        PageSize: String(pageSize),
-        PageNum: '1',
-      };
-      const method = 'GET';
-      const path = '/';
-      const now = new Date();
-      const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
-      const headerObj = {
-        'Host': this.host,
-        'Content-Type': CONTENT_TYPE,
-        'X-Content-Sha256': EMPTY_BODY_SHA256,
-        'X-Date': amzDate,
-      };
-      const { authorization } = this._sign(method, path, queryObj, headerObj, amzDate);
-      const queryStr = Object.keys(queryObj).sort()
-        .map(k => this._uriEncode(k) + '=' + this._uriEncode(queryObj[k]))
-        .join(AMP);
-      const options = {
-        hostname: this.host,
-        port: 443,
-        path: path + '?' + queryStr,
-        method,
-        headers: {
-          'Host': this.host,
-          'Content-Type': CONTENT_TYPE,
-          'X-Content-Sha256': EMPTY_BODY_SHA256,
-          'X-Date': amzDate,
-          'Authorization': authorization,
-        },
-      };
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            if (json.ResponseMetadata && json.ResponseMetadata.Error) {
-              reject(new Error('BytePlus API error: ' + json.ResponseMetadata.Error.Code + ' - ' + json.ResponseMetadata.Error.Message));
-            } else {
-              resolve(json.Result?.MediaInfoList || []);
-            }
-          } catch (e) {
-            reject(new Error('BytePlus response parse error: ' + e.message + ', data: ' + data.slice(0, 500)));
-          }
-        });
-      });
-      req.on('error', (e) => reject(e));
-      req.setTimeout(15000, () => { req.destroy(new Error('BytePlus request timeout')); });
-      req.end();
-    });
-  }
 
 // ===== Debug endpoint: list all dramas + episode byteplusVid fill status =====
 // Purpose: from Railway logs/curl, identify dramaId and see which episodes

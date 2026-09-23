@@ -235,9 +235,20 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
 app.get('/api/dramas', async (_req, res, next) => {
   try {
     const dramas = await prisma.drama.findMany({
-      select: { slug: true, title: true, cover: true, totalEpisodes: true, priceCents: true },
+      select: { slug: true, title: true, cover: true, totalEpisodes: true, priceCents: true, coverByteplusVid: true },
       orderBy: { createdAt: 'desc' },
     });
+    // Refresh cover URLs from VOD if coverByteplusVid is set
+    for (const drama of dramas) {
+      if (drama.coverByteplusVid && byteplusVodAdapter) {
+        try {
+          const url = await byteplusVodAdapter.getCoverUrl(drama.coverByteplusVid);
+          if (url) drama.cover = url;
+        } catch (e) {
+          console.warn('[cover] ' + drama.slug + ' failed: ' + String(e));
+        }
+      }
+    }
     res.data(dramas);
   } catch (err) {
     next(err);
@@ -259,6 +270,15 @@ app.get('/api/dramas/:slug', async (req, res, next) => {
     if (!drama) {
       res.status(404).json({ error: 'Drama not found' });
       return;
+    }
+    // Refresh cover URL from VOD if coverByteplusVid is set
+    if (drama.coverByteplusVid && byteplusVodAdapter) {
+      try {
+        const url = await byteplusVodAdapter.getCoverUrl(drama.coverByteplusVid);
+        if (url) drama.cover = url;
+      } catch (e) {
+        console.warn('[cover] ' + drama.slug + ' failed: ' + String(e));
+      }
     }
     res.data(drama);
   } catch (err) {
