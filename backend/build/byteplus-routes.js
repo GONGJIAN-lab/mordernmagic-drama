@@ -224,7 +224,7 @@ class BytePlusVodAdapter {
     const info = await this.getPlayInfo(vid);
     const pi = info && info.Result && info.Result.PlayInfoList && info.Result.PlayInfoList[0]; const mainUrl = pi && pi.MainPlayUrl;
     if (!mainUrl) throw new Error('No MainPlayUrl for cover vid ' + vid);
-    return mainUrl.replace(/\.mp4(\?|$)/, ".jpg$1");
+    return mainUrl;
   }
 
   listMedia(spaceName, pageSize = 50) {
