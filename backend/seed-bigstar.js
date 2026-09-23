@@ -10,7 +10,7 @@ const p = new PrismaClient();
   const d = await p.drama.create({
     data: {
       slug: 'bigstar-drama',
-      title: 'BIG STAR Drama',
+      title: '穿进虐文五个儿媳我来宠',
       cover: 'https://placehold.co/600x800/4A148C/D4AF37?text=BIG+STAR+Drama',
       description: 'A short drama series by BIG STAR MEDIA',
       totalEpisodes: 45,
