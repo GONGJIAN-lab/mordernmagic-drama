@@ -222,7 +222,7 @@ class BytePlusVodAdapter {
   async getCoverUrl(vid) {
     // 默认 HTTP MainPlayUrl, <img src> 直接用
     const info = await this.getPlayInfo(vid);
-    const mainUrl = info && info.Result && info.Result.MainPlayUrl;
+    const pi = info && info.Result && info.Result.PlayInfoList && info.Result.PlayInfoList[0]; const mainUrl = pi && pi.MainPlayUrl;
     if (!mainUrl) throw new Error('No MainPlayUrl for cover vid ' + vid);
     return mainUrl;
   }
