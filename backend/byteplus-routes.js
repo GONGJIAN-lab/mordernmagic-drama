@@ -220,7 +220,9 @@ class BytePlusVodAdapter {
     });
   }
   async getCoverUrl(vid) {
-    // 默认 HTTP MainPlayUrl, <img src> 直接用
+    // NOTE: vid 可能是 JPEG 图（Codec=mjpeg, Format=JPEG_PIPE），文件名带 .mp4 后缀；
+    // VOD CDN 对 JPEG_PIPE 返回 Content-Type: image/jpeg，<img src> 直接当图片显示；
+    // 不要改 .mp4→.jpg（CDN 严格按源文件路径，会 403）。默认 HTTP MainPlayUrl 直接用。
     const info = await this.getPlayInfo(vid);
     const pi = info && info.Result && info.Result.PlayInfoList && info.Result.PlayInfoList[0]; const mainUrl = pi && pi.MainPlayUrl;
     if (!mainUrl) throw new Error('No MainPlayUrl for cover vid ' + vid);

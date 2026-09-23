@@ -202,18 +202,12 @@ app.get('/api/dramas', async (_req, res, next) => {
             orderBy: { createdAt: 'desc' },
         });
         // Refresh cover URLs from VOD if coverByteplusVid is set
-        console.log("[debug-cover] adapter=" + (byteplusVodAdapter ? "YES" : "NO") + " dramas=" + dramas.length);
-        for (const d of dramas)
-            console.log("[debug-cover] " + d.slug + " vid=" + (d.coverByteplusVid || "NULL") + " cover=" + (d.cover || "").substring(0, 50));
         for (const drama of dramas) {
             if (drama.coverByteplusVid && byteplusVodAdapter) {
-                console.log("[debug-cover] LOOP " + drama.slug + " vid=" + (drama.coverByteplusVid || "NULL") + " adapter=" + (byteplusVodAdapter ? "YES" : "NO"));
                 try {
                     const url = await byteplusVodAdapter.getCoverUrl(drama.coverByteplusVid);
-                    console.log("[debug-cover] got url=" + (url ? url.substring(0, 80) : "NULL"));
                     if (url)
                         drama.cover = url;
-                    console.log("[debug-cover] after cover=" + drama.cover.substring(0, 50));
                 }
                 catch (e) {
                     console.warn('[cover] ' + drama.slug + ' failed: ' + String(e));
