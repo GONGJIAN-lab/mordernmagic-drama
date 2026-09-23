@@ -15,6 +15,7 @@ const p = new PrismaClient();
       description: 'A short drama series by BIG STAR MEDIA',
       totalEpisodes: 45,
       priceCents: 499,
+      coverByteplusVid: 'v25dcbgm0018dap9loatgd60f0r51e9g',
     },
   });
   console.log('Drama id:', d.id);
