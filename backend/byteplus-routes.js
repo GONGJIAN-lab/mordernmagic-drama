@@ -222,9 +222,9 @@ class BytePlusVodAdapter {
   async getCoverUrl(vid) {
     // 默认 HTTP MainPlayUrl, <img src> 直接用
     const info = await this.getPlayInfo(vid);
-    const pi = info && info.Result && info.Result.PlayInfoList && info.Result.PlayInfoList[0]; const mainUrl = pi && pi.MainPlayUrl;
-    if (!mainUrl) throw new Error('No MainPlayUrl for cover vid ' + vid);
-    return mainUrl;
+    const pi = info && info.Result && info.Result.PlayInfoList && info.Result.PlayInfoList[0]; const coverUrl = pi && pi.CoverUrl;
+    if (!coverUrl) throw new Error('No CoverUrl for cover vid ' + vid);
+    return coverUrl;
   }
 
   listMedia(spaceName, pageSize = 50) {
@@ -337,7 +337,7 @@ router.get('/episodes/:dramaId', async (req, res) => {
           const bp = await vodAdapter.getPlayInfo(ep.byteplusVid);
           if (bp && bp.Result && bp.Result.PlayInfoList && bp.Result.PlayInfoList.length > 0) {
             const playInfo = bp.Result.PlayInfoList[0];
-            const mainUrl = playInfo.MainPlayUrl || playInfo.PlayUrl;
+            const coverUrl = playInfo.MainPlayUrl || playInfo.PlayUrl;
             if (mainUrl) {
               out.videoUrl = mainUrl;
               out.source = 'byteplus';
