@@ -157,8 +157,7 @@ class BytePlusVodAdapter {
         Action: 'GetPlayInfo',
         Version: VOD_VERSION,
         SpaceName: this.spaceName,
-        Vid: vid,
-        ...(opts.Ssl ? { Ssl: opts.Ssl } : {}),
+        Vid: vid
       };
       const method = 'GET';
       const path = '/';
@@ -210,24 +209,6 @@ class BytePlusVodAdapter {
             } else {
               resolve(json);
             }
-
-  // Get a fresh signed URL for a drama cover image (Vid from Drama.coverByteplusVid).
-  // Uses Ssl='1' so BytePlus prefers HTTPS when CDN has SSL cert; otherwise HTTP.
-  // Both work in TikTok Minis WebView since video-cdn is allowListed.
-  async getCoverUrl(vid) {
-    if (!vid) return null;
-    try {
-      const bp = await this.getPlayInfo(vid, { Ssl: '1' });
-      if (bp && bp.Result && bp.Result.PlayInfoList && bp.Result.PlayInfoList.length > 0) {
-        const playInfo = bp.Result.PlayInfoList[0];
-        return playInfo.MainPlayUrl || playInfo.PlayUrl || null;
-      }
-    } catch (e) {
-      console.warn('[BytePlus] cover getPlayInfo failed for ' + vid + ': ' + e.message);
-    }
-    return null;
-  }
-
           } catch (e) {
             reject(new Error('BytePlus response parse error: ' + e.message + ', data: ' + data.slice(0, 500)));
           }
@@ -238,6 +219,13 @@ class BytePlusVodAdapter {
       req.end();
     });
   }
+  async getCoverUrl(vid) {
+    const info = await this.getPlayInfo(vid, { Ssl: 1 });
+    const mainUrl = info && info.Result && info.Result.MainPlayUrl;
+    if (!mainUrl) throw new Error('No MainPlayUrl for cover vid ' + vid);
+    return mainUrl;
+  }
+
   listMedia(spaceName, pageSize = 50) {
     return new Promise((resolve, reject) => {
       const queryObj = {
