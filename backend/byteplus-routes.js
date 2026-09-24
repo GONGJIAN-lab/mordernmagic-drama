@@ -157,7 +157,8 @@ class BytePlusVodAdapter {
         Action: 'GetPlayInfo',
         Version: VOD_VERSION,
         SpaceName: this.spaceName,
-        Vid: vid
+        Vid: vid,
+        Ssl: '1' // v1.2: 让 BytePlus 返回 HTTPS URL（TikTok Minis mixed content block）
       };
       const method = 'GET';
       const path = '/';

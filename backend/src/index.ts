@@ -415,6 +415,7 @@ app.all('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, 
     if (!ep) return res.status(404).json({ error: 'episode not found' });
 
     let playUrl: string | null = null;
+    let posterUrl: string | null = null; // v1.2: 双保险，浏览器首帧 poster 用 BytePlus 官方海报
     let subtitleUrl: string | null = null;
     let subtitleFormat = 'srt';
     let subtitleLang = 'en';
@@ -427,6 +428,7 @@ app.all('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, 
         const pi = bp?.Result?.PlayInfoList?.[0];
         if (pi) {
           playUrl = pi.MainPlayUrl || pi.PlayUrl;
+          posterUrl = pi.PosterUrl || pi.CoverUrl || null; // v1.2: 优先 BytePlus PosterUrl
           const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
           const enSub = subs.find((s: any) =>
             (s.Language || s.Lang || '').toLowerCase().startsWith('en')
@@ -477,7 +479,7 @@ app.all('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, 
       return res.status(500).json({ error: 'no video source', source });
     }
 
-    res.data({ playUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
+    res.data({ playUrl, posterUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
   } catch (e: any) {
     next(e);
   }
