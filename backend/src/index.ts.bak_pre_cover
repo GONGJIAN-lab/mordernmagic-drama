@@ -13,13 +13,20 @@ import jwt from 'jsonwebtoken';
 import { Resend } from 'resend';
 import Stripe from 'stripe';
 import { PrismaClient } from '@prisma/client';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createTikTokWebhookRouter } from './webhook/tiktok';
 import minisWebhookRouter from './minis-webhook';
 import minisPaymentRouter from './minis-payment';
 import { createPrismaAdapter } from './webhook/prisma-adapter';
 
-// (S3 fallback removed per 2026-09-26: BIG STAR Drama 前提是数据全部走 BytePlus VOD。
-//  任何 byteplus 失败都返回 500，不静默回退 S3。)
+const s3 = new S3Client({
+  region: process.env.AWS_REGION || 'us-east-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+  },
+});
 
 
 dotenv.config();
@@ -228,20 +235,9 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
 app.get('/api/dramas', async (_req, res, next) => {
   try {
     const dramas = await prisma.drama.findMany({
-      select: { slug: true, title: true, cover: true, totalEpisodes: true, priceCents: true, coverByteplusVid: true },
+      select: { slug: true, title: true, cover: true, totalEpisodes: true, priceCents: true },
       orderBy: { createdAt: 'desc' },
     });
-    // Refresh cover URLs from VOD if coverByteplusVid is set
-    for (const drama of dramas) {
-      if (drama.coverByteplusVid && byteplusVodAdapter) {
-        try {
-          const url = await byteplusVodAdapter.getCoverUrl(drama.coverByteplusVid);
-          if (url) drama.cover = url;
-        } catch (e) {
-          console.warn('[cover] ' + drama.slug + ' failed: ' + String(e));
-        }
-      }
-    }
     res.data(dramas);
   } catch (err) {
     next(err);
@@ -263,15 +259,6 @@ app.get('/api/dramas/:slug', async (req, res, next) => {
     if (!drama) {
       res.status(404).json({ error: 'Drama not found' });
       return;
-    }
-    // Refresh cover URL from VOD if coverByteplusVid is set
-    if (drama.coverByteplusVid && byteplusVodAdapter) {
-      try {
-        const url = await byteplusVodAdapter.getCoverUrl(drama.coverByteplusVid);
-        if (url) drama.cover = url;
-      } catch (e) {
-        console.warn('[cover] ' + drama.slug + ' failed: ' + String(e));
-      }
     }
     res.data(drama);
   } catch (err) {
@@ -407,45 +394,72 @@ app.all('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, 
     });
     if (!ep) return res.status(404).json({ error: 'episode not found' });
 
-    // 2026-09-26: 前提走 BytePlus VOD — byteplusVid 必须存在且 GetPlayInfo 必须成功，否则 500
-    if (!ep.byteplusVid) {
-      return res.status(500).json({ error: 'no byteplusVid for this episode' });
-    }
-    if (!byteplusVodAdapter) {
-      return res.status(500).json({ error: 'byteplus vod adapter not initialized' });
-    }
-
     let playUrl: string | null = null;
-    let posterUrl: string | null = null;
     let subtitleUrl: string | null = null;
     let subtitleFormat = 'srt';
     let subtitleLang = 'en';
+    let source = 'pending';
 
-    const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
-    const pi = bp?.Result?.PlayInfoList?.[0];
-    if (!pi) {
-      return res.status(500).json({ error: 'byteplus getPlayInfo returned no PlayInfoList' });
+    // 1) BytePlus first
+    if (ep.byteplusVid && byteplusVodAdapter) {
+      try {
+        const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
+        const pi = bp?.Result?.PlayInfoList?.[0];
+        if (pi) {
+          playUrl = pi.MainPlayUrl || pi.PlayUrl;
+          const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
+          const enSub = subs.find((s: any) =>
+            (s.Language || s.Lang || '').toLowerCase().startsWith('en')
+          ) || subs[0];
+          if (enSub) {
+            subtitleUrl = enSub.SubtitleUrl || enSub.Url;
+            subtitleFormat = enSub.Format || 'srt';
+            subtitleLang = enSub.Language || enSub.Lang || 'en';
+          }
+          source = 'byteplus';
+        }
+      } catch (e: any) {
+        console.warn('[play-auth] BytePlus failed:', e.message);
+      }
     }
-    playUrl = pi.MainPlayUrl || pi.PlayUrl;
-    posterUrl = pi.PosterUrl || pi.CoverUrl || null;
-    const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
-    const enSub = subs.find((s: any) =>
-      (s.Language || s.Lang || '').toLowerCase().startsWith('en')
-    ) || subs[0];
-    if (enSub) {
-      subtitleUrl = enSub.SubtitleUrl || enSub.Url;
-      subtitleFormat = enSub.Format || 'srt';
-      subtitleLang = enSub.Language || enSub.Lang || 'en';
+
+    // 2) S3 fallback
+    if (!playUrl && ep.s3Key) {
+      try {
+        const cmd = new GetObjectCommand({
+          Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+          Key: ep.s3Key,
+        });
+        playUrl = await getSignedUrl(s3, cmd, { expiresIn: 604800 });
+        source = 's3-presigned';
+      } catch (e: any) {
+        console.warn('[play-auth] S3 presign failed:', e.message);
+      }
+    }
+
+    if (!subtitleUrl) {
+      const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+      try {
+        subtitleUrl = await getSignedUrl(
+          s3,
+          new GetObjectCommand({
+            Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+            Key: subtitleS3Key,
+          }),
+          { expiresIn: 300 }
+        );
+      } catch (e) {
+        console.log('Subtitle not found for key:', subtitleS3Key);
+      }
     }
 
     if (!playUrl) {
-      return res.status(500).json({ error: 'no MainPlayUrl from byteplus' });
+      return res.status(500).json({ error: 'no video source', source });
     }
 
-    res.data({ playUrl, posterUrl, subtitleUrl, subtitleFormat, subtitleLang, source: 'byteplus' });
+    res.data({ playUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
   } catch (e: any) {
-    console.error('[play-auth] BytePlus failed:', e.message);
-    return res.status(500).json({ error: 'byteplus failed', detail: e.message });
+    next(e);
   }
 });
 

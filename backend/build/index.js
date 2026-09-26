@@ -10,19 +10,12 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const resend_1 = require("resend");
 const stripe_1 = __importDefault(require("stripe"));
 const client_1 = require("@prisma/client");
-const client_s3_1 = require("@aws-sdk/client-s3");
-const s3_request_presigner_1 = require("@aws-sdk/s3-request-presigner");
 const tiktok_1 = require("./webhook/tiktok");
 const minis_webhook_1 = __importDefault(require("./minis-webhook"));
 const minis_payment_1 = __importDefault(require("./minis-payment"));
 const prisma_adapter_1 = require("./webhook/prisma-adapter");
-const s3 = new client_s3_1.S3Client({
-    region: process.env.AWS_REGION || 'us-east-1',
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-    },
-});
+// (S3 fallback removed per 2026-09-26: BIG STAR Drama 前提是数据全部走 BytePlus VOD。
+//  任何 byteplus 失败都返回 500，不静默回退 S3。)
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const prisma = new client_1.PrismaClient();
@@ -374,65 +367,40 @@ app.all('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, 
         });
         if (!ep)
             return res.status(404).json({ error: 'episode not found' });
+        // 2026-09-26: 前提走 BytePlus VOD — byteplusVid 必须存在且 GetPlayInfo 必须成功，否则 500
+        if (!ep.byteplusVid) {
+            return res.status(500).json({ error: 'no byteplusVid for this episode' });
+        }
+        if (!byteplusVodAdapter) {
+            return res.status(500).json({ error: 'byteplus vod adapter not initialized' });
+        }
         let playUrl = null;
+        let posterUrl = null;
         let subtitleUrl = null;
         let subtitleFormat = 'srt';
         let subtitleLang = 'en';
-        let source = 'pending';
-        // 1) BytePlus first
-        if (ep.byteplusVid && byteplusVodAdapter) {
-            try {
-                const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
-                const pi = bp?.Result?.PlayInfoList?.[0];
-                if (pi) {
-                    playUrl = pi.MainPlayUrl || pi.PlayUrl;
-                    const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
-                    const enSub = subs.find((s) => (s.Language || s.Lang || '').toLowerCase().startsWith('en')) || subs[0];
-                    if (enSub) {
-                        subtitleUrl = enSub.SubtitleUrl || enSub.Url;
-                        subtitleFormat = enSub.Format || 'srt';
-                        subtitleLang = enSub.Language || enSub.Lang || 'en';
-                    }
-                    source = 'byteplus';
-                }
-            }
-            catch (e) {
-                console.warn('[play-auth] BytePlus failed:', e.message);
-            }
+        const bp = await byteplusVodAdapter.getPlayInfo(ep.byteplusVid);
+        const pi = bp?.Result?.PlayInfoList?.[0];
+        if (!pi) {
+            return res.status(500).json({ error: 'byteplus getPlayInfo returned no PlayInfoList' });
         }
-        // 2) S3 fallback
-        if (!playUrl && ep.s3Key) {
-            try {
-                const cmd = new client_s3_1.GetObjectCommand({
-                    Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-                    Key: ep.s3Key,
-                });
-                playUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, cmd, { expiresIn: 604800 });
-                source = 's3-presigned';
-            }
-            catch (e) {
-                console.warn('[play-auth] S3 presign failed:', e.message);
-            }
-        }
-        if (!subtitleUrl) {
-            const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
-            try {
-                subtitleUrl = await (0, s3_request_presigner_1.getSignedUrl)(s3, new client_s3_1.GetObjectCommand({
-                    Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
-                    Key: subtitleS3Key,
-                }), { expiresIn: 300 });
-            }
-            catch (e) {
-                console.log('Subtitle not found for key:', subtitleS3Key);
-            }
+        playUrl = pi.MainPlayUrl || pi.PlayUrl;
+        posterUrl = pi.PosterUrl || pi.CoverUrl || null;
+        const subs = pi.SubtitleInfoList || pi.SubtitleList || [];
+        const enSub = subs.find((s) => (s.Language || s.Lang || '').toLowerCase().startsWith('en')) || subs[0];
+        if (enSub) {
+            subtitleUrl = enSub.SubtitleUrl || enSub.Url;
+            subtitleFormat = enSub.Format || 'srt';
+            subtitleLang = enSub.Language || enSub.Lang || 'en';
         }
         if (!playUrl) {
-            return res.status(500).json({ error: 'no video source', source });
+            return res.status(500).json({ error: 'no MainPlayUrl from byteplus' });
         }
-        res.data({ playUrl, subtitleUrl, subtitleFormat, subtitleLang, source });
+        res.data({ playUrl, posterUrl, subtitleUrl, subtitleFormat, subtitleLang, source: 'byteplus' });
     }
     catch (e) {
-        next(e);
+        console.error('[play-auth] BytePlus failed:', e.message);
+        return res.status(500).json({ error: 'byteplus failed', detail: e.message });
     }
 });
 app.use(errorHandler);

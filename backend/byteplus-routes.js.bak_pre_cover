@@ -1,6 +1,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const https = require('https');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 
@@ -12,12 +14,27 @@ const SEMI = String.fromCharCode(59);  // semicolon
 const COLON = String.fromCharCode(58); // colon
 
 const VOD_VERSION = '2023-01-01';
-// 2026-09-26: S3 fallback removed — BIG STAR Drama 前提是数据全部走 BytePlus VOD。
-// (S3_BUCKET / S3_SIGN_TTL / S3Client 删除；不再有 silent fallback to S3。)
+const S3_BUCKET = process.env.S3_BUCKET || 'mordernmagic-drama-media';
+const S3_SIGN_TTL = 604800; // 7 days, matching src/index.ts play-auth
 // sha256 of empty string — used for GET requests with no body
 const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 // Content-Type required by BytePlus signing (RFC 3986 form encoding, even for GET)
 const CONTENT_TYPE = 'application/x-www-form-urlencoded; charset=utf-8';
+
+// ===== S3 client (same config as src/index.ts) =====
+let s3 = null;
+try {
+  s3 = new S3Client({
+    region: process.env.AWS_REGION || 'us-east-1',
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    },
+  });
+  console.log('[S3] Client OK, bucket=' + S3_BUCKET + ', region=' + (process.env.AWS_REGION || 'us-east-1'));
+} catch (e) {
+  console.warn('[S3] Client init failed: ' + e.message);
+}
 
 // ===== BytePlus VOD adapter (hand-written HMAC-SHA256 signing) =====
 class BytePlusVodAdapter {
@@ -134,14 +151,13 @@ class BytePlusVodAdapter {
     return { amzDate, authorization };
   }
 
-  getPlayInfo(vid, opts = {}) {
+  getPlayInfo(vid) {
     return new Promise((resolve, reject) => {
       const queryObj = {
         Action: 'GetPlayInfo',
         Version: VOD_VERSION,
         SpaceName: this.spaceName,
-        Vid: vid,
-        Ssl: '1' // v1.2: 让 BytePlus 返回 HTTPS URL（TikTok Minis mixed content block）
+        Vid: vid
       };
       const method = 'GET';
       const path = '/';
@@ -203,16 +219,6 @@ class BytePlusVodAdapter {
       req.end();
     });
   }
-  async getCoverUrl(vid) {
-    // NOTE: vid 可能是 JPEG 图（Codec=mjpeg, Format=JPEG_PIPE），文件名带 .mp4 后缀；
-    // VOD CDN 对 JPEG_PIPE 返回 Content-Type: image/jpeg，<img src> 直接当图片显示；
-    // 不要改 .mp4→.jpg（CDN 严格按源文件路径，会 403）。默认 HTTP MainPlayUrl 直接用。
-    const info = await this.getPlayInfo(vid);
-    const pi = info && info.Result && info.Result.PlayInfoList && info.Result.PlayInfoList[0]; const mainUrl = pi && pi.MainPlayUrl;
-    if (!mainUrl) throw new Error('No MainPlayUrl for cover vid ' + vid);
-    return mainUrl;
-  }
-
   listMedia(spaceName, pageSize = 50) {
     return new Promise((resolve, reject) => {
       const queryObj = {
@@ -286,7 +292,7 @@ try {
 
 }
 
-// ===== Route: list episodes for a drama — BytePlus only (no S3 fallback) =====
+// ===== Route: list episodes for a drama, with BytePlus or S3 fallback =====
 router.get('/episodes/:dramaId', async (req, res) => {
   const { dramaId } = req.params;
   const prisma = req.prisma;
@@ -294,11 +300,10 @@ router.get('/episodes/:dramaId', async (req, res) => {
   if (!prisma) {
     return res.status(500).json({ success: false, error: 'prisma not available on req' });
   }
-  if (!vodAdapter) {
-    return res.status(500).json({ success: false, error: 'byteplus vod adapter not initialized' });
-  }
 
   try {
+    // Episode table fields (from schema.prisma): id, dramaId, episodeNumber, s3Key, durationSec, createdAt
+    // byteplusVid was added later via ALTER TABLE
     const episodes = await prisma.$queryRawUnsafe(
       'SELECT e."episodeNumber", e."s3Key", e."byteplusVid" '
       + 'FROM "Episode" e '
@@ -318,21 +323,37 @@ router.get('/episodes/:dramaId', async (req, res) => {
         source: 'pending'
       };
 
-      // 2026-09-26: byteplusVid 必须存在，GetPlayInfo 必须成功，否则 500
-      if (!ep.byteplusVid) {
-        throw new Error('episode ' + ep.episodeNumber + ' has no byteplusVid');
+      // 1) Try BytePlus first (only if byteplusVid is set and adapter is ready)
+      if (ep.byteplusVid && vodAdapter) {
+        try {
+          const bp = await vodAdapter.getPlayInfo(ep.byteplusVid);
+          if (bp && bp.Result && bp.Result.PlayInfoList && bp.Result.PlayInfoList.length > 0) {
+            const playInfo = bp.Result.PlayInfoList[0];
+            const mainUrl = playInfo.MainPlayUrl || playInfo.PlayUrl;
+            if (mainUrl) {
+              out.videoUrl = mainUrl;
+              out.source = 'byteplus';
+              return out;
+            }
+          }
+        } catch (e) {
+          console.warn('[BytePlus] ep ' + ep.episodeNumber + ' getPlayInfo failed: ' + e.message);
+        }
       }
-      const bp = await vodAdapter.getPlayInfo(ep.byteplusVid);
-      if (!bp || !bp.Result || !bp.Result.PlayInfoList || bp.Result.PlayInfoList.length === 0) {
-        throw new Error('byteplus getPlayInfo returned no PlayInfoList for ep ' + ep.episodeNumber);
+
+      // 2) Fall back to S3 presigned URL (7 days, same as play-auth route)
+      if (ep.s3Key && s3) {
+        try {
+          const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: ep.s3Key });
+          const signedUrl = await getSignedUrl(s3, cmd, { expiresIn: S3_SIGN_TTL });
+          out.videoUrl = signedUrl;
+          out.source = 's3-presigned';
+        } catch (e) {
+          console.warn('[S3] ep ' + ep.episodeNumber + ' presign failed: ' + e.message);
+          out.source = 's3-failed';
+        }
       }
-      const playInfo = bp.Result.PlayInfoList[0];
-      const mainUrl = playInfo.MainPlayUrl || playInfo.PlayUrl;
-      if (!mainUrl) {
-        throw new Error('byteplus returned no MainPlayUrl for ep ' + ep.episodeNumber);
-      }
-      out.videoUrl = mainUrl;
-      out.source = 'byteplus';
+
       return out;
     }));
 
