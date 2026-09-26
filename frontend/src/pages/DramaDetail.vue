@@ -5,8 +5,8 @@
       <h1>{{ drama.title }}</h1>
       <p>{{ drama.description }}</p>
       <div class="meta">
-        <span>全 {{ drama.totalEps }} 集</span>
-        <span class="price">${{ drama.pricePerEp }} / 集</span>
+        <span>全 {{ drama.totalEpisodes ?? drama.totalEps ?? "?" }} 集</span>
+        <span class="price">${{ drama.pricePerEp ?? (drama.priceCents ? (drama.priceCents/100).toFixed(2) : "?") }} / 集</span>
       </div>
     </div>
     <div class="ep-list">
