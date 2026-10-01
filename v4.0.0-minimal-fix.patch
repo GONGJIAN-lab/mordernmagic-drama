@@ -1,0 +1,90 @@
+diff --git a/.gitignore b/.gitignore
+index 7247c98..7bc1393 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,4 +1,38 @@
++# Dependencies
+ node_modules/
++
++# Build output (generated during Docker build)
+ build/
++dist/
++
++# Environment
+ .env
+ .env.local
++.env.*.local
++
++# OS files
++.DS_Store
++Thumbs.db
++
++# Backup files
++*.bak
++*.swp
++*.tmp
++
++# IDE
++.vscode/
++.idea/
++*.iml
++
++# Logs
++*.log
++npm-debug.log*
++
++# Scrap / patch files
++*.patch
++sandbox-fixes.patch
++scratch*
++
++# Data dumps
++*.csv
++*.sql.dump
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..9cbdf44
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,28 @@
++# BIG STAR Drama Backend
++# Railway Docker deployment
++
++FROM node:18-slim
++
++# Install openssl for Prisma
++RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
++
++WORKDIR /app
++
++# Copy package files first for layer caching
++COPY backend/package*.json ./
++RUN npm ci
++
++# Copy prisma schema and source
++COPY backend/prisma ./prisma
++COPY backend/src ./src
++COPY backend/tsconfig.json ./
++
++# Generate Prisma client and build TypeScript
++RUN npx prisma generate
++RUN npm run build
++
++# Railway provides PORT env var at runtime
++EXPOSE 3000
++
++# Run migrations then start server
++CMD ["npm", "start"]
+diff --git a/backend/package.json b/backend/package.json
+index bfa4286..a0bef52 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -2,7 +2,7 @@
+   "name": "mordernmagic-drama-backend",
+   "version": "1.0.0",
+   "description": "MORDERN MAGIC short drama platform backend",
+-  "main": "dist/index.js",
++  "main": "build/index.js",
+   "scripts": {
+     "build": "rm -rf build && tsc",
+     "start": "prisma migrate deploy && node build/index.js",

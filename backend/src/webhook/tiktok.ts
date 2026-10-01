@@ -70,7 +70,8 @@ export function createTikTokWebhookRouter(config: WebhookHandlerConfig): Router 
     (payload as any).event_id = eventId;
 
     // 检查是否有自定义处理器
-    const customHandler = config.customHandlers?.[payload.event_type];
+    const eventTypeStr = payload.event_type || (payload as any).event || '';
+    const customHandler = eventTypeStr && config.customHandlers ? config.customHandlers[eventTypeStr] : undefined;
     if (customHandler) {
       try {
         await customHandler(payload);
@@ -103,8 +104,6 @@ export { verifyWebhookSignature, WebhookSignatureError } from './signature';
 export { WebhookService } from './service';
 export type {
   TikTokWebhookPayload,
-  TradeOrderData,
-  SubscriptionData,
   SignatureConfig,
   WebhookDatabaseAdapter,
   WebhookHandlerConfig,

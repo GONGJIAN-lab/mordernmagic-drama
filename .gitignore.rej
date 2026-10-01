@@ -1,0 +1,40 @@
+diff a/.gitignore b/.gitignore	(rejected hunks)
+@@ -1,4 +1,38 @@
++# Dependencies
+ node_modules/
++
++# Build output (generated during Docker build)
+ build/
++dist/
++
++# Environment
+ .env
+ .env.local
++.env.*.local
++
++# OS files
++.DS_Store
++Thumbs.db
++
++# Backup files
++*.bak
++*.swp
++*.tmp
++
++# IDE
++.vscode/
++.idea/
++*.iml
++
++# Logs
++*.log
++npm-debug.log*
++
++# Scrap / patch files
++*.patch
++sandbox-fixes.patch
++scratch*
++
++# Data dumps
++*.csv
++*.sql.dump

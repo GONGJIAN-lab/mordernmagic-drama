@@ -8,148 +8,126 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  email         String         @unique
-  createdAt     DateTime       @default(now())
-  otpCode       String?
-  otpExpiresAt  DateTime?
-  orders        Order[]
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  openId    String?  @unique
+
+  // Email OTP
+  otpCode      String?
+  otpExpiresAt DateTime?
+
+  // TikTok OAuth
+  tiktokAccessToken  String?
+  tiktokRefreshToken String?
+  tiktokTokenExpiresAt DateTime?
+
+  // Relations
   watchHistory  WatchHistory[]
+  userUnlocks   UserUnlock[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Drama {
-  id            String     @id @default(cuid())
-  slug          String     @unique
-  title         String
-  cover         String
-  description   String
-  totalEpisodes Int
-  priceCents    Int
-  createdAt     DateTime   @default(now())
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  title          String
+  cover          String?
+  totalEpisodes  Int      @default(0)
+  priceCents     Int      @default(499)
+  description    String?
+  albumId        String?  // TikTok / BytePlus album_id (assigned after content review)
+
   episodes      Episode[]
-  orders        Order[]
   watchHistory  WatchHistory[]
-  coverByteplusVid  String?
+  userUnlocks   UserUnlock[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Episode {
-  id            String         @id @default(cuid())
-  dramaId       String
-  episodeNumber Int
-  s3Key         String
-  byteplusVid   String?
-  durationSec   Int
-  createdAt     DateTime       @default(now())
-  drama         Drama          @relation(fields: [dramaId], references: [id])
-  watchHistory  WatchHistory[]
+  id                String   @id @default(cuid())
+  dramaId           String
+  episodeNumber     Int
+  s3Key             String?
+  byteplusVid       String?  // BytePlus video ID (vid)
+  byteplusEpisodeId String?  // TikTok / BytePlus episode_id (assigned after content review)
+  durationSec       Int?
+
+  drama        Drama          @relation(fields: [dramaId], references: [id])
+  watchHistory WatchHistory[]
+  userUnlocks  UserUnlock[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([dramaId, episodeNumber])
 }
 
-model Order {
-  id              String   @id @default(cuid())
-  userId          String
-  dramaId         String
-  stripeSessionId String   @unique
-  amountCents     Int
-  status          String   @default("pending")
-  createdAt       DateTime @default(now())
-  user            User     @relation(fields: [userId], references: [id])
-  drama           Drama    @relation(fields: [dramaId], references: [id])
-}
-
 model WatchHistory {
-  id          String   @id @default(cuid())
+  id          String @id @default(cuid())
   userId      String
   dramaId     String
   episodeId   String
-  positionSec Int      @default(0)
-  updatedAt   DateTime @updatedAt
-  user        User     @relation(fields: [userId], references: [id])
-  drama       Drama    @relation(fields: [dramaId], references: [id])
-  episode     Episode  @relation(fields: [episodeId], references: [id])
+  positionSec Int    @default(0)
+
+  user    User    @relation(fields: [userId], references: [id])
+  drama   Drama   @relation(fields: [dramaId], references: [id])
+  episode Episode @relation(fields: [episodeId], references: [id])
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
 
   @@unique([userId, dramaId, episodeId])
 }
 
-// ============================================================
-// TikTok Minis Webhook Models
-// ============================================================
-
+// Webhook events (idempotent)
 model WebhookEvent {
-  id          String   @id @default(uuid())
-  eventId     String   @unique @map("event_id")
-  eventType   String   @map("event_type")
-  payload     String   @db.Text
-  processedAt DateTime @default(now()) @map("processed_at")
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  eventType String
+  payload   String
 
-  @@index([eventId])
-  @@index([processedAt])
-  @@map("webhook_events")
+  createdAt DateTime @default(now())
 }
 
-model MinisOrder {
-  id          String    @id @default(uuid())
-  orderId     String    @map("order_id")
-  outOrderNo  String?   @map("out_order_no")
-  openId      String    @map("open_id")
-  skuId       String    @map("sku_id")
-  skuType     String    @default("single_episode") @map("sku_type")
-  dramaId     String?   @map("drama_id")
-  episodeId   String?   @map("episode_id")
-  quantity    Int       @default(1)
-  totalAmount Int       @map("total_amount")
-  currency    String    @default("USD")
-  status      String
-  payTime     DateTime? @map("pay_time")
-  paidAt      DateTime? @map("paid_at")
-  attach      String?   @db.Text
-  failReason  String?   @map("fail_reason")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-
-  @@unique([openId, skuId, orderId])
-  @@index([orderId])
-  @@index([openId])
-  @@index([status])
-  @@map("minis_orders")
-}
-
+// TikTok Minis Subscriptions (primary payment model)
 model MinisSubscription {
-  id             String    @id @default(uuid())
-  subscriptionId String    @unique @map("subscription_id")
-  openId         String    @map("open_id")
-  skuId          String    @map("sku_id")
-  status         String
-  startTime      DateTime  @map("start_time")
-  expireTime     DateTime? @map("expire_time")
-  autoRenew      Boolean   @default(true) @map("auto_renew")
-  nextRenewTime  DateTime? @map("next_renew_time")
-  cancelReason   String?   @map("cancel_reason")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  id             String   @id @default(cuid())
+  subscriptionId String   @unique
+  openId         String
+  skuId          String
+  orderId        String?  // webhook 中的 order_id（redeem.success 时记录）
+  status         String   @default("active")
+  startTime      DateTime?
+  expireTime     DateTime?
+  autoRenew      Boolean  @default(true)
+  nextRenewTime  DateTime?
+  cancelReason   String?
 
-  @@index([subscriptionId])
-  @@index([openId])
-  @@index([status])
-  @@map("minis_subscriptions")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
+// User content unlocks (legacy compat, subscription also writes here)
 model UserUnlock {
-  id         String    @id @default(uuid())
-  openId     String    @map("open_id")
-  skuId      String    @map("sku_id")
-  orderId    String    @map("order_id")
-  dramaId    String?   @map("drama_id")
-  episodeId  String?   @map("episode_id")
-  unlockType String    @map("unlock_type")
-  validUntil DateTime? @map("valid_until")
-  createdAt  DateTime  @default(now()) @map("created_at")
+  id         String    @id @default(cuid())
+  openId     String
+  skuId      String
+  orderId    String
+  dramaId    String?
+  episodeId  String?
+  unlockType String    // single_episode | full_drama | subscription | unknown
+  validUntil DateTime?
+
+  user    User     @relation(fields: [openId], references: [openId])
+  drama   Drama?   @relation(fields: [dramaId], references: [id])
+  episode Episode? @relation(fields: [episodeId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([openId, skuId, orderId])
-  @@index([openId])
-  @@index([dramaId])
-  @@map("user_unlocks")
 }
-
-// BIG STAR Drama v1.3 — Minis payment (added 2026-09-15)

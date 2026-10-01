@@ -1,0 +1,2423 @@
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..7bc1393
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,38 @@
++# Dependencies
++node_modules/
++
++# Build output (generated during Docker build)
++build/
++dist/
++
++# Environment
++.env
++.env.local
++.env.*.local
++
++# OS files
++.DS_Store
++Thumbs.db
++
++# Backup files
++*.bak
++*.swp
++*.tmp
++
++# IDE
++.vscode/
++.idea/
++*.iml
++
++# Logs
++*.log
++npm-debug.log*
++
++# Scrap / patch files
++*.patch
++sandbox-fixes.patch
++scratch*
++
++# Data dumps
++*.csv
++*.sql.dump
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..9cbdf44
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,28 @@
++# BIG STAR Drama Backend
++# Railway Docker deployment
++
++FROM node:18-slim
++
++# Install openssl for Prisma
++RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
++
++WORKDIR /app
++
++# Copy package files first for layer caching
++COPY backend/package*.json ./
++RUN npm ci
++
++# Copy prisma schema and source
++COPY backend/prisma ./prisma
++COPY backend/src ./src
++COPY backend/tsconfig.json ./
++
++# Generate Prisma client and build TypeScript
++RUN npx prisma generate
++RUN npm run build
++
++# Railway provides PORT env var at runtime
++EXPOSE 3000
++
++# Run migrations then start server
++CMD ["npm", "start"]
+diff --git a/backend/package.json b/backend/package.json
+new file mode 100644
+index 0000000..a0bef52
+--- /dev/null
++++ b/backend/package.json
+@@ -0,0 +1,38 @@
++{
++  "name": "mordernmagic-drama-backend",
++  "version": "1.0.0",
++  "description": "MORDERN MAGIC short drama platform backend",
++  "main": "build/index.js",
++  "scripts": {
++    "build": "rm -rf build && tsc",
++    "start": "prisma migrate deploy && node build/index.js",
++    "dev": "ts-node src/index.ts",
++    "db:generate": "prisma generate",
++    "db:migrate": "prisma migrate dev",
++    "db:deploy": "prisma migrate deploy",
++    "db:studio": "prisma studio",
++    "postinstall": "prisma generate"
++  },
++  "dependencies": {
++    "@aws-sdk/client-s3": "^3.1106.0",
++    "@aws-sdk/s3-request-presigner": "^3.1106.0",
++    "@prisma/client": "^5.18.0",
++    "cors": "^2.8.5",
++    "dotenv": "^16.4.5",
++    "express": "^4.19.2",
++    "jsonwebtoken": "^9.0.2",
++    "resend": "^3.5.0"
++  },
++  "devDependencies": {
++    "@types/cors": "^2.8.17",
++    "@types/express": "^4.17.21",
++    "@types/jsonwebtoken": "^9.0.6",
++    "@types/node": "^22.5.0",
++    "prisma": "^5.18.0",
++    "ts-node": "^10.9.2",
++    "typescript": "^5.5.4"
++  },
++  "engines": {
++    "node": ">=18.0.0"
++  }
++}
+diff --git a/backend/prisma/migrations/20250926_drop_stripe_beans/migration.sql b/backend/prisma/migrations/20250926_drop_stripe_beans/migration.sql
+new file mode 100644
+index 0000000..b93303d
+--- /dev/null
++++ b/backend/prisma/migrations/20250926_drop_stripe_beans/migration.sql
+@@ -0,0 +1,13 @@
++-- Migration: Drop Stripe Order and Beans MinisOrder tables
++-- Date: 2026-09-26
++-- Backend version: 2.4.0
++
++-- Drop Order table (Stripe legacy)
++-- Note: Foreign key constraints are handled automatically by DROP TABLE CASCADE
++DROP TABLE IF EXISTS "Order";
++
++-- Drop MinisOrder table (TikTok Beans single-episode payment)
++DROP TABLE IF EXISTS "MinisOrder";
++
++-- MinisSubscription table already exists and is the primary payment model
++-- UserUnlock table is kept for legacy compatibility
+diff --git a/backend/prisma/migrations/20260926220000_switch_to_subscription/migration.sql b/backend/prisma/migrations/20260926220000_switch_to_subscription/migration.sql
+new file mode 100644
+index 0000000..408482a
+--- /dev/null
++++ b/backend/prisma/migrations/20260926220000_switch_to_subscription/migration.sql
+@@ -0,0 +1,13 @@
++-- Migration: switch_to_subscription
++-- 1. Add orderId column to MinisSubscription (nullable, records webhook order_id)
++-- 2. Order / MinisOrder tables already removed in prior schema versions
++
++DO $$
++BEGIN
++  IF NOT EXISTS (
++    SELECT 1 FROM information_schema.columns
++    WHERE table_name = 'MinisSubscription' AND column_name = 'orderId'
++  ) THEN
++    ALTER TABLE "MinisSubscription" ADD COLUMN "orderId" TEXT;
++  END IF;
++END $$;
+diff --git a/backend/prisma/migrations/20261001000000_add_tiktok_ids/migration.sql b/backend/prisma/migrations/20261001000000_add_tiktok_ids/migration.sql
+new file mode 100644
+index 0000000..121d980
+--- /dev/null
++++ b/backend/prisma/migrations/20261001000000_add_tiktok_ids/migration.sql
+@@ -0,0 +1,5 @@
++-- Add albumId to Drama (TikTok/BytePlus album_id)
++ALTER TABLE "Drama" ADD COLUMN IF NOT EXISTS "albumId" TEXT;
++
++-- Add byteplusEpisodeId to Episode (TikTok/BytePlus episode_id)
++ALTER TABLE "Episode" ADD COLUMN IF NOT EXISTS "byteplusEpisodeId" TEXT;
+diff --git a/backend/prisma/migrations/20261001120000_add_byteplus_vid/migration.sql b/backend/prisma/migrations/20261001120000_add_byteplus_vid/migration.sql
+new file mode 100644
+index 0000000..008fde2
+--- /dev/null
++++ b/backend/prisma/migrations/20261001120000_add_byteplus_vid/migration.sql
+@@ -0,0 +1,2 @@
++-- Add byteplusVid to Episode (BytePlus video ID for VePlayer)
++ALTER TABLE "Episode" ADD COLUMN IF NOT EXISTS "byteplusVid" TEXT;
+diff --git a/backend/prisma/schema.prisma b/backend/prisma/schema.prisma
+new file mode 100644
+index 0000000..f06f656
+--- /dev/null
++++ b/backend/prisma/schema.prisma
+@@ -0,0 +1,133 @@
++generator client {
++  provider = "prisma-client-js"
++}
++
++datasource db {
++  provider = "postgresql"
++  url      = env("DATABASE_URL")
++}
++
++model User {
++  id        String   @id @default(cuid())
++  email     String?  @unique
++  openId    String?  @unique
++
++  // Email OTP
++  otpCode      String?
++  otpExpiresAt DateTime?
++
++  // TikTok OAuth
++  tiktokAccessToken  String?
++  tiktokRefreshToken String?
++  tiktokTokenExpiresAt DateTime?
++
++  // Relations
++  watchHistory  WatchHistory[]
++  userUnlocks   UserUnlock[]
++
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++}
++
++model Drama {
++  id             String   @id @default(cuid())
++  slug           String   @unique
++  title          String
++  cover          String?
++  totalEpisodes  Int      @default(0)
++  priceCents     Int      @default(499)
++  description    String?
++  albumId        String?  // TikTok / BytePlus album_id (assigned after content review)
++
++  episodes      Episode[]
++  watchHistory  WatchHistory[]
++  userUnlocks   UserUnlock[]
++
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++}
++
++model Episode {
++  id                String   @id @default(cuid())
++  dramaId           String
++  episodeNumber     Int
++  s3Key             String?
++  byteplusVid       String?  // BytePlus video ID (vid)
++  byteplusEpisodeId String?  // TikTok / BytePlus episode_id (assigned after content review)
++  durationSec       Int?
++
++  drama        Drama          @relation(fields: [dramaId], references: [id])
++  watchHistory WatchHistory[]
++  userUnlocks  UserUnlock[]
++
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++
++  @@unique([dramaId, episodeNumber])
++}
++
++model WatchHistory {
++  id          String @id @default(cuid())
++  userId      String
++  dramaId     String
++  episodeId   String
++  positionSec Int    @default(0)
++
++  user    User    @relation(fields: [userId], references: [id])
++  drama   Drama   @relation(fields: [dramaId], references: [id])
++  episode Episode @relation(fields: [episodeId], references: [id])
++
++  updatedAt DateTime @updatedAt
++  createdAt DateTime @default(now())
++
++  @@unique([userId, dramaId, episodeId])
++}
++
++// Webhook events (idempotent)
++model WebhookEvent {
++  id        String   @id @default(cuid())
++  eventId   String   @unique
++  eventType String
++  payload   String
++
++  createdAt DateTime @default(now())
++}
++
++// TikTok Minis Subscriptions (primary payment model)
++model MinisSubscription {
++  id             String   @id @default(cuid())
++  subscriptionId String   @unique
++  openId         String
++  skuId          String
++  orderId        String?  // webhook 中的 order_id（redeem.success 时记录）
++  status         String   @default("active")
++  startTime      DateTime?
++  expireTime     DateTime?
++  autoRenew      Boolean  @default(true)
++  nextRenewTime  DateTime?
++  cancelReason   String?
++
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++}
++
++// User content unlocks (legacy compat, subscription also writes here)
++model UserUnlock {
++  id         String    @id @default(cuid())
++  openId     String
++  skuId      String
++  orderId    String
++  dramaId    String?
++  episodeId  String?
++  unlockType String    // single_episode | full_drama | subscription | unknown
++  validUntil DateTime?
++
++  user    User     @relation(fields: [openId], references: [openId])
++  drama   Drama?   @relation(fields: [dramaId], references: [id])
++  episode Episode? @relation(fields: [episodeId], references: [id])
++
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++
++  @@unique([openId, skuId, orderId])
++}
+diff --git a/backend/src/index.ts b/backend/src/index.ts
+index 9303cb9..b10b543 100644
+--- a/backend/src/index.ts
++++ b/backend/src/index.ts
+@@ -10,32 +10,202 @@ export {};
+ import cors from 'cors';
+ import dotenv from 'dotenv';
+ import jwt from 'jsonwebtoken';
++import crypto from 'crypto';
+ import { Resend } from 'resend';
+-import Stripe from 'stripe';
+ import { PrismaClient } from '@prisma/client';
+-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+ import { createTikTokWebhookRouter } from './webhook/tiktok';
+ import { createPrismaAdapter } from './webhook/prisma-adapter';
+-
+-const s3 = new S3Client({
+-  region: process.env.AWS_REGION || 'us-east-1',
+-  credentials: {
+-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+-  },
+-});
+-
++import * as TikTokOAuth from './tiktok-oauth';
++import * as TikTokSubscription from './tiktok-subscription';
+ 
+ dotenv.config();
+ 
+ const app = express();
+ const prisma = new PrismaClient();
+ const resend = new Resend(process.env.RESEND_API_KEY || '');
+-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' });
+ 
+ const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
+ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://drama.mordernmagic.com';
++const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
++const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
++
++/**
++ * App-level access token cache (Client Credentials flow)
++ * Used for TikTok Open API server-to-server calls (e.g. play_token)
++ */
++let appAccessTokenCache: { token: string; expiresAt: number } | null = null;
++
++async function getAppAccessToken(): Promise<string> {
++  if (appAccessTokenCache && appAccessTokenCache.expiresAt > Date.now() + 60_000) {
++    return appAccessTokenCache.token;
++  }
++  if (!TIKTOK_CLIENT_KEY || !TIKTOK_CLIENT_SECRET) {
++    throw new Error('Missing TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET env vars');
++  }
++
++  const params = new URLSearchParams();
++  params.append('client_key', TIKTOK_CLIENT_KEY);
++  params.append('client_secret', TIKTOK_CLIENT_SECRET);
++  params.append('grant_type', 'client_credentials');
++
++  const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++    body: params.toString(),
++  });
++
++  const data = await res.json().catch(() => ({})) as any;
++  if (!res.ok || data.error) {
++    throw new Error(`getAppAccessToken failed: ${data.error_description || data.error || res.statusText}`);
++  }
++
++  appAccessTokenCache = {
++    token: data.access_token,
++    expiresAt: Date.now() + (data.expires_in || 7200) * 1000,
++  };
++  return data.access_token;
++}
++
++/**
++ * Get play_auth_token from TikTok Open API for VePlayer playback.
++ * Endpoint: GET /v2/sg/shortdrama/play_token/?client_key=...&episode_id=...
++ * Requires app-level access_token.
++ */
++async function getPlayAuthToken(episodeId: string): Promise<string> {
++  const accessToken = await getAppAccessToken();
++
++  const url = new URL('https://open.tiktokapis.com/v2/sg/shortdrama/play_token/');
++  url.searchParams.set('client_key', TIKTOK_CLIENT_KEY);
++  url.searchParams.set('episode_id', episodeId);
++
++  const res = await fetch(url.toString(), {
++    method: 'GET',
++    headers: { 'Authorization': `Bearer ${accessToken}` },
++  });
++
++  const data = await res.json().catch(() => ({})) as any;
++  if (!res.ok || data.error) {
++    throw new Error(`getPlayAuthToken failed: ${data.error_description || data.error || res.statusText}`);
++  }
++
++  // TikTok API may wrap response in data.data or return directly
++  const token = data.data?.play_auth_token || data.play_auth_token || '';
++  if (!token) {
++    throw new Error('getPlayAuthToken: play_auth_token missing in response');
++  }
++  return token;
++}
++
++// ===== BytePlus VOD API Client =====
++const BYTEPLUS_AK = process.env.BYTEPLUS_ACCESS_KEY_ID || '';
++const BYTEPLUS_SK = process.env.BYTEPLUS_SECRET_ACCESS_KEY || '';
++const BYTEPLUS_HOST = 'open.byteplusapi.com';
++const BYTEPLUS_REGION = 'ap-singapore-1';
++const BYTEPLUS_SERVICE = 'vod';
++
++function byteplusSha256(data: string): string {
++  return crypto.createHash('sha256').update(data).digest('hex');
++}
++
++function byteplusHmac(key: string | Buffer, data: string): Buffer {
++  return crypto.createHmac('sha256', key).update(data).digest();
++}
++
++function byteplusSignRequest(method: string, path: string, queryParams: Record<string, string>, body: string = '') {
++  const now = new Date();
++  const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, '');
++  const timeStamp = now.toISOString().slice(0, 19).replace(/[-:]/g, '') + 'Z';
++  const bodyHash = byteplusSha256(body);
++
++  const sortedParams = Object.keys(queryParams).sort()
++    .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(queryParams[k])}`)
++    .join('&');
++
++  const headers: Record<string, string> = {
++    'content-type': 'application/x-www-form-urlencoded',
++    'host': BYTEPLUS_HOST,
++    'x-content-sha256': bodyHash,
++    'x-date': timeStamp,
++  };
++
++  const signedHeaders = Object.keys(headers).sort().join(';');
++  const headerLines = Object.keys(headers).sort()
++    .map(k => `${k.toLowerCase()}:${headers[k]}`).join('\n') + '\n';
++
++  const canonicalRequest = [
++    method, path, sortedParams, headerLines, signedHeaders, bodyHash,
++  ].join('\n');
++
++  const credentialScope = `${dateStamp}/${BYTEPLUS_REGION}/${BYTEPLUS_SERVICE}/request`;
++  const stringToSign = [
++    'HMAC-SHA256', timeStamp, credentialScope, byteplusSha256(canonicalRequest),
++  ].join('\n');
++
++  const kDate = byteplusHmac(BYTEPLUS_SK, dateStamp);
++  const kRegion = byteplusHmac(kDate, BYTEPLUS_REGION);
++  const kService = byteplusHmac(kRegion, BYTEPLUS_SERVICE);
++  const kSigning = byteplusHmac(kService, 'request');
++  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
++
++  const auth = `HMAC-SHA256 Credential=${BYTEPLUS_AK}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
++  return { headers: { ...headers, Authorization: auth }, sortedParams };
++}
++
++async function byteplusGetAllMedia(spaceName: string): Promise<any[]> {
++  const allMedia: any[] = [];
++  let offset = 0;
++  const pageSize = 50;
++
++  while (true) {
++    const params: Record<string, string> = {
++      Action: 'GetMediaList',
++      Version: '2023-01-01',
++      SpaceName: spaceName,
++      PageSize: String(pageSize),
++      Offset: String(offset),
++    };
++
++    const signed = byteplusSignRequest('GET', '/', params);
++    const url = `https://${BYTEPLUS_HOST}/?${signed.sortedParams}`;
++
++    const res = await fetch(url, { headers: signed.headers });
++    const data = await res.json() as any;
++
++    if (!data.Result || !data.Result.MediaInfoList) break;
++
++    const list = data.Result.MediaInfoList;
++    allMedia.push(...list);
++    if (list.length < pageSize) break;
++    offset += pageSize;
++  }
++
++  return allMedia;
++}
++
++// ===== Subscription Tier Config =====
++const SUBSCRIPTION_TIERS = [
++  {
++    tierId: process.env.BIGSTAR_TIER_MONTHLY || 'bigstar_600_600_1_1m_set1',
++    name: 'Monthly',
++    price: '$6.00',
++    period: 'month',
++    label: '月卡',
++  },
++  {
++    tierId: process.env.BIGSTAR_TIER_QUARTERLY || 'bigstar_1499_600_1_3m_set1',
++    name: 'Quarterly',
++    price: '$14.99',
++    period: 'quarter',
++    label: '季卡',
++  },
++  {
++    tierId: process.env.BIGSTAR_TIER_HALF_YEARLY || 'bigstar_2999_600_1_6m_set1',
++    name: 'Half-Yearly',
++    price: '$29.99',
++    period: 'half-year',
++    label: '半年卡',
++  },
++];
+ 
+ // ===== Types =====
+ interface AuthenticatedRequest extends Request {
+@@ -67,58 +237,13 @@ function errorHandler(err: any, _req: Request, res: Response, _next: NextFunctio
+ }
+ 
+ // ===== CORS =====
+-app.use(cors({ origin: '*' }));  // ⚠️ 审核期临时通配, 上线前改回 FRONTEND_URL
+-app.get('/', (_req, res) => res.json({ status: 'ok' }));  // ⚠️ Railway health check 探 /, 不加 deploy failed
++app.use(cors({ origin: '*' }));
++app.get('/', (_req, res) => res.json({ status: 'ok', version: '2.5.0' }));
+ app.use((req, res, next) => {
+   res.data = (payload) => res.json({ data: payload });
+   next();
+ });
+ 
+-// ===== Stripe Webhook (MUST be before express.json()) =====
+-app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res, next) => {
+-  try {
+-    const sig = req.headers['stripe-signature'] as string;
+-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+-
+-    let event: Stripe.Event;
+-    try {
+-      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+-    } catch (err: any) {
+-      res.status(400).json({ error: `Webhook signature verification failed: ${err.message}` });
+-      return;
+-    }
+-
+-    if (event.type === 'checkout.session.completed') {
+-      const session = event.data.object as Stripe.Checkout.Session;
+-      const { userId, dramaId } = session.metadata || {};
+-
+-      if (userId && dramaId) {
+-        await prisma.order.updateMany({
+-          where: { stripeSessionId: session.id },
+-          data: { status: 'paid' },
+-        });
+-
+-        // Create watch history entries for all episodes (unlock)
+-        const episodes = await prisma.episode.findMany({
+-          where: { dramaId },
+-          select: { id: true },
+-        });
+-        for (const ep of episodes) {
+-          await prisma.watchHistory.upsert({
+-            where: { userId_dramaId_episodeId: { userId, dramaId, episodeId: ep.id } },
+-            update: {},
+-            create: { userId, dramaId, episodeId: ep.id, positionSec: 0 },
+-          });
+-        }
+-      }
+-    }
+-
+-    res.json({ received: true });
+-  } catch (err) {
+-    next(err);
+-  }
+-});
+-
+ // ===== TikTok Minis Webhook (MUST be before express.json()) =====
+ app.use('/webhook/tiktok', express.raw({ type: 'application/json' }));
+ const tiktokDbAdapter = createPrismaAdapter({ prisma });
+@@ -135,6 +260,96 @@ app.use(
+     },
+     db: tiktokDbAdapter,
+     verbose: process.env.NODE_ENV !== 'production',
++    customHandlers: {
++      // Subscription webhook events — trade_order 已彻底移除
++      'minis.subscription_order.redeem.success': async (payload: any) => {
++        try {
++          // 兼容两种 payload 格式：顶层字段 或 payload.subscription 嵌套
++          const sub = payload.subscription || payload;
++          const subscriptionId = sub.subscription_id || payload.subscription_id || '';
++          const openId = sub.open_id || payload.user_id || '';
++          const skuId = sub.sku_id || sub.tier_id || payload.tier_id || '';
++          const orderId = payload.order_id || sub.order_id || '';
++
++          if (!subscriptionId || !openId) {
++            console.error('[Webhook] subscription_order.redeem.success: missing subscription_id or user_id/open_id', payload);
++            return;
++          }
++
++          // 根据 tier 计算过期时间（默认 30 天）
++          const tierDurationDays = skuId.includes('3m') ? 90 : skuId.includes('6m') ? 180 : 30;
++          const now = new Date();
++          const expireTime = sub.expire_time || sub.end_time
++            ? new Date((sub.expire_time || sub.end_time) * 1000)
++            : new Date(now.getTime() + tierDurationDays * 24 * 60 * 60 * 1000);
++
++          await prisma.minisSubscription.upsert({
++            where: { subscriptionId },
++            create: {
++              subscriptionId,
++              openId,
++              skuId,
++              orderId: orderId || null,
++              status: 'active',
++              startTime: sub.start_time || sub.begin_time ? new Date((sub.start_time || sub.begin_time) * 1000) : now,
++              expireTime,
++              autoRenew: sub.auto_renew !== false && payload.auto_renew !== false,
++              nextRenewTime: sub.next_renew_time || sub.next_deduct_time ? new Date((sub.next_renew_time || sub.next_deduct_time) * 1000) : null,
++            },
++            update: {
++              openId,
++              skuId,
++              orderId: orderId || undefined,
++              status: 'active',
++              startTime: sub.start_time || sub.begin_time ? new Date((sub.start_time || sub.begin_time) * 1000) : undefined,
++              expireTime,
++              autoRenew: sub.auto_renew !== false && payload.auto_renew !== false,
++              nextRenewTime: sub.next_renew_time || sub.next_deduct_time ? new Date((sub.next_renew_time || sub.next_deduct_time) * 1000) : undefined,
++            },
++          });
++          console.log(`[Webhook] Subscription activated: ${subscriptionId}, tier=${skuId}, order=${orderId}`);
++        } catch (err) {
++          console.error('[Webhook] subscription_order.redeem.success error:', err);
++          throw err;
++        }
++      },
++      'minis.subscription_order.expired': async (payload: any) => {
++        try {
++          const sub = payload.subscription || payload;
++          const subscriptionId = sub.subscription_id || payload.subscription_id || '';
++          if (!subscriptionId) {
++            console.error('[Webhook] subscription_order.expired: missing subscription_id', payload);
++            return;
++          }
++          await prisma.minisSubscription.updateMany({
++            where: { subscriptionId },
++            data: { status: 'expired', autoRenew: false },
++          });
++          console.log(`[Webhook] Subscription expired: ${subscriptionId}`);
++        } catch (err) {
++          console.error('[Webhook] subscription_order.expired error:', err);
++          throw err;
++        }
++      },
++      'minis.subscription_order.auto_renew_disabled': async (payload: any) => {
++        try {
++          const sub = payload.subscription || payload;
++          const subscriptionId = sub.subscription_id || payload.subscription_id || '';
++          if (!subscriptionId) {
++            console.error('[Webhook] subscription_order.auto_renew_disabled: missing subscription_id', payload);
++            return;
++          }
++          await prisma.minisSubscription.updateMany({
++            where: { subscriptionId },
++            data: { autoRenew: false },
++          });
++          console.log(`[Webhook] Auto-renew disabled: ${subscriptionId}`);
++        } catch (err) {
++          console.error('[Webhook] subscription_order.auto_renew_disabled error:', err);
++          throw err;
++        }
++      },
++    },
+   })
+ );
+ 
+@@ -143,10 +358,43 @@ app.use(express.json());
+ 
+ // ===== Health Check =====
+ app.get('/health', (_req, res) => {
+-  res.json({ status: 'ok', time: new Date().toISOString() });
++  res.json({ status: 'ok', time: new Date().toISOString(), version: '3.0.0' });
+ });
+ 
+-// ===== Auth: Send OTP =====
++// ============================================================
++// AUTH: TikTok Minis OAuth
++// ============================================================
++
++app.post('/api/minis/auth/login', async (req, res, next) => {
++  try {
++    const { code } = req.body;
++    if (!code || typeof code !== 'string') {
++      res.status(400).json({ error: 'auth_code required' });
++      return;
++    }
++
++    const result = await TikTokOAuth.loginWithAuthCode(code, prisma);
++    const token = jwt.sign({ userId: result.openId, openId: result.openId }, JWT_SECRET, { expiresIn: '7d' });
++
++    res.data({ token, openId: result.openId });
++  } catch (err) {
++    next(err);
++  }
++});
++
++app.get('/api/minis/auth/url', (_req, res, next) => {
++  try {
++    const url = TikTokOAuth.buildAuthUrl('bigstar_drama');
++    res.data({ authUrl: url });
++  } catch (err) {
++    next(err);
++  }
++});
++
++// ============================================================
++// AUTH: Email OTP (backup login)
++// ============================================================
++
+ app.post('/api/auth/send-otp', async (req, res, next) => {
+   try {
+     const { email } = req.body;
+@@ -156,7 +404,7 @@ app.post('/api/auth/send-otp', async (req, res, next) => {
+     }
+ 
+     const code = Math.floor(100000 + Math.random() * 900000).toString();
+-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
++    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+ 
+     await prisma.user.upsert({
+       where: { email },
+@@ -167,9 +415,9 @@ app.post('/api/auth/send-otp', async (req, res, next) => {
+     await resend.emails.send({
+       from: process.env.RESEND_FROM_EMAIL || 'noreply@mordernmagic.com',
+       to: email,
+-      subject: 'MORDERN MAGIC 验证码',
++      subject: 'BIG STAR Drama 验证码',
+       html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;">
+-        <h2 style="color:#1a365d;">MORDERN MAGIC</h2>
++        <h2 style="color:#1a365d;">BIG STAR Drama</h2>
+         <p>您的登录验证码是 <strong style="font-size:24px;color:#1a365d;">${code}</strong>，10 分钟内有效。</p>
+         <p style="color:#666;font-size:12px;">如非本人操作，请忽略此邮件。</p>
+       </div>`,
+@@ -181,7 +429,6 @@ app.post('/api/auth/send-otp', async (req, res, next) => {
+   }
+ });
+ 
+-// ===== Auth: Verify OTP =====
+ app.post('/api/auth/verify-otp', async (req, res, next) => {
+   try {
+     const { email, code } = req.body;
+@@ -196,7 +443,6 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
+       return;
+     }
+ 
+-    // Clear OTP after use
+     await prisma.user.update({
+       where: { id: user.id },
+       data: { otpCode: null, otpExpiresAt: null },
+@@ -209,7 +455,10 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
+   }
+ });
+ 
+-// ===== Dramas: List =====
++// ============================================================
++// DRAMAS
++// ============================================================
++
+ app.get('/api/dramas', async (_req, res, next) => {
+   try {
+     const dramas = await prisma.drama.findMany({
+@@ -222,14 +471,13 @@ app.get('/api/dramas', async (_req, res, next) => {
+   }
+ });
+ 
+-// ===== Dramas: Detail =====
+ app.get('/api/dramas/:slug', async (req, res, next) => {
+   try {
+     const drama = await prisma.drama.findUnique({
+       where: { slug: req.params.slug },
+       include: {
+         episodes: {
+-          select: { id: true, episodeNumber: true, s3Key: true, durationSec: true },
++          select: { id: true, episodeNumber: true, s3Key: true, durationSec: true, byteplusVid: true },
+           orderBy: { episodeNumber: 'asc' },
+         },
+       },
+@@ -244,7 +492,6 @@ app.get('/api/dramas/:slug', async (req, res, next) => {
+   }
+ });
+ 
+-// ===== Dramas: Episodes List =====
+ app.get('/api/dramas/:slug/episodes', async (req, res, next) => {
+   try {
+     const drama = await prisma.drama.findUnique({
+@@ -257,7 +504,7 @@ app.get('/api/dramas/:slug/episodes', async (req, res, next) => {
+     }
+     const episodes = await prisma.episode.findMany({
+       where: { dramaId: drama.id },
+-      select: { id: true, episodeNumber: true, s3Key: true, durationSec: true },
++      select: { id: true, episodeNumber: true, s3Key: true, durationSec: true, byteplusVid: true },
+       orderBy: { episodeNumber: 'asc' },
+     });
+     res.data(episodes);
+@@ -266,55 +513,185 @@ app.get('/api/dramas/:slug/episodes', async (req, res, next) => {
+   }
+ });
+ 
+-app.post('/api/payment/create-checkout', requireAuth, async (req: AuthenticatedRequest, res, next) => {
++// ============================================================
++// SUBSCRIPTION: TikTok Minis Subscription APIs
++// ============================================================
++
++/**
++ * GET /api/minis/subscription/tiers
++ * 返回 3 档订阅配置（前端展示用，无需鉴权）
++ */
++app.get('/api/minis/subscription/tiers', (_req, res) => {
++  res.data({ tiers: SUBSCRIPTION_TIERS });
++});
++
++/**
++ * POST /api/minis/subscription/create
++ * 创建订阅订单
++ */
++app.post('/api/minis/subscription/create', async (req, res, next) => {
+   try {
+-    const { dramaSlug, email } = req.body;
+-    if (!dramaSlug) {
+-      res.status(400).json({ error: 'dramaSlug required' });
++    const { tierId, orderInfo, openId } = req.body;
++    if (!tierId || !orderInfo || !openId) {
++      res.status(400).json({ error: 'tierId, orderInfo, openId required' });
+       return;
+     }
+ 
+-    const drama = await prisma.drama.findUnique({ where: { slug: dramaSlug } });
+-    if (!drama) {
+-      res.status(404).json({ error: 'Drama not found' });
++    const result = await TikTokSubscription.createSubscription(tierId, orderInfo, openId, prisma);
++    res.data(result);
++  } catch (err) {
++    next(err);
++  }
++});
++
++/**
++ * POST /api/minis/subscription/get-active-list
++ * 获取用户活跃订阅列表
++ */
++app.post('/api/minis/subscription/get-active-list', async (req, res, next) => {
++  try {
++    const { openId } = req.body;
++    if (!openId) {
++      res.status(400).json({ error: 'openId required' });
+       return;
+     }
+ 
+-    const session = await stripe.checkout.sessions.create({
+-      payment_method_types: ['card'],
+-      line_items: [{
+-        price_data: {
+-          currency: 'usd',
+-          product_data: { name: drama.title, images: drama.cover ? [drama.cover] : undefined },
+-          unit_amount: drama.priceCents,
+-        },
+-        quantity: 1,
+-      }],
+-      mode: 'payment',
+-      customer_email: email,
+-      metadata: { userId: req.userId!, dramaId: drama.id },
+-      success_url: `${FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+-      cancel_url: `${FRONTEND_URL}/drama/${dramaSlug}`,
+-    });
++    const result = await TikTokSubscription.getActiveSubscriptions(openId, prisma);
++    res.data({ subscriptions: result });
++  } catch (err) {
++    next(err);
++  }
++});
+ 
+-    // Create pending order
+-    await prisma.order.create({
+-      data: {
+-        userId: req.userId!,
+-        dramaId: drama.id,
+-        stripeSessionId: session.id,
+-        amountCents: drama.priceCents,
+-        status: 'pending',
+-      },
+-    });
++/**
++ * POST /api/minis/subscription/get-tier-info
++ * 获取订阅套餐信息（带平台价格）
++ */
++app.post('/api/minis/subscription/get-tier-info', async (req, res, next) => {
++  try {
++    const { tierIds, openId, devicePlatform } = req.body;
++    if (!tierIds || !Array.isArray(tierIds) || !openId) {
++      res.status(400).json({ error: 'tierIds (array), openId required' });
++      return;
++    }
++
++    const result = await TikTokSubscription.getSubscriptionTierInfo(tierIds, openId, prisma, devicePlatform);
++    res.data(result);
++  } catch (err) {
++    next(err);
++  }
++});
++
++/**
++ * POST /api/minis/subscription/get-subscription-info
++ * 按 trade_order_id 查订阅详情
++ */
++app.post('/api/minis/subscription/get-subscription-info', async (req, res, next) => {
++  try {
++    const { tradeOrderId, openId } = req.body;
++    if (!tradeOrderId || !openId) {
++      res.status(400).json({ error: 'tradeOrderId, openId required' });
++      return;
++    }
++
++    const result = await TikTokSubscription.getSubscriptionInfo(tradeOrderId, openId, prisma);
++    res.data(result);
++  } catch (err) {
++    next(err);
++  }
++});
++
++/**
++ * POST /api/minis/subscription/reactivate
++ * 重新激活订阅
++ */
++app.post('/api/minis/subscription/reactivate', async (req, res, next) => {
++  try {
++    const { subscriptionId, orderInfo, openId } = req.body;
++    if (!subscriptionId || !orderInfo || !openId) {
++      res.status(400).json({ error: 'subscriptionId, orderInfo, openId required' });
++      return;
++    }
++
++    const result = await TikTokSubscription.reactivateSubscription(subscriptionId, orderInfo, openId, prisma);
++    res.data(result);
++  } catch (err) {
++    next(err);
++  }
++});
++
++// ============================================================
++// SUBSCRIPTION CHECK: 检查用户是否有有效订阅
++// ============================================================
++
++async function hasActiveSubscription(openId: string): Promise<boolean> {
++  if (!openId) return false;
++  const sub = await prisma.minisSubscription.findFirst({
++    where: {
++      openId,
++      status: 'active',
++      OR: [
++        { expireTime: null },
++        { expireTime: { gt: new Date() } },
++      ],
++    },
++  });
++  return !!sub;
++}
++
++/**
++ * GET /api/minis/subscription/status?openId=xxx
++ * 快速检查用户订阅状态（前端用）
++ */
++app.get('/api/minis/subscription/status', async (req, res, next) => {
++  try {
++    const { openId } = req.query;
++    if (!openId) {
++      res.status(400).json({ error: 'openId required' });
++      return;
++    }
++    const active = await hasActiveSubscription(String(openId));
++    res.data({ subscribed: active });
++  } catch (err) {
++    next(err);
++  }
++});
+ 
+-    res.data({ sessionId: session.id, url: session.url });
++// ============================================================
++// UNLOCK STATUS (legacy compat, now subscription-based)
++// ============================================================
++
++app.get('/api/minis/unlock-status', async (req, res, next) => {
++  try {
++    const { openId, dramaSlug, episodeNumber } = req.query;
++    if (!openId || !dramaSlug) {
++      res.status(400).json({ error: 'openId, dramaSlug required' });
++      return;
++    }
++
++    // 前 3 集永远免费
++    if (episodeNumber && Number(episodeNumber) <= 3) {
++      res.data({ unlocked: true, type: 'free_preview' });
++      return;
++    }
++
++    // 检查是否有有效订阅
++    const active = await hasActiveSubscription(String(openId));
++    if (active) {
++      res.data({ unlocked: true, type: 'subscription' });
++      return;
++    }
++
++    res.data({ unlocked: false });
+   } catch (err) {
+     next(err);
+   }
+ });
+ 
+-// ===== Watch History: Get =====
++// ============================================================
++// Watch History
++// ============================================================
++
+ app.get('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, res, next) => {
+   try {
+     const history = await prisma.watchHistory.findMany({
+@@ -331,7 +708,6 @@ app.get('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, res
+   }
+ });
+ 
+-// ===== Watch History: Upsert =====
+ app.post('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, res, next) => {
+   try {
+     const { dramaSlug, episodeId, positionSec } = req.body;
+@@ -363,47 +739,148 @@ app.post('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, re
+   }
+ });
+ 
+-// ===== Error handler (must be last) =====
++// ============================================================
++// Play Auth (TikTok Minis VePlayer) — subscription-gated
++// Returns albumId, episodeId, vid, playAuthToken for VePlayer
++// via TTMinis.getPlayer() constructor
++// ============================================================
++
+ app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
+   try {
+     const { slug, episodeNumber } = req.params;
++    const { openId } = req.body;
++    const epNum = Number(episodeNumber);
++
++    const drama = await prisma.drama.findUnique({
++      where: { slug },
++      select: { id: true, albumId: true, slug: true },
++    });
++    if (!drama) return res.status(404).json({ error: 'drama not found' });
++
+     const ep = await prisma.episode.findFirst({
+-      where: { drama: { slug }, episodeNumber: Number(episodeNumber) },
++      where: { dramaId: drama.id, episodeNumber: epNum },
+     });
+     if (!ep) return res.status(404).json({ error: 'episode not found' });
+ 
+-    const cmd = new GetObjectCommand({
+-      Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+-      Key: ep.s3Key,
+-    });
+-    const playUrl = await getSignedUrl(s3, cmd, { expiresIn: 86400 });
++    // 前 3 集免费，无需订阅
++    if (epNum <= 3) {
++      // Fallback: if byteplusEpisodeId not set yet, use episode.id as temporary fallback
++      // (will be replaced with real TikTok episode_id after content review)
++      const episodeId = ep.byteplusEpisodeId || ep.id;
++      let playAuthToken = '';
++      try {
++        playAuthToken = await getPlayAuthToken(episodeId);
++      } catch (tokenErr) {
++        console.warn(`[play-auth] getPlayAuthToken fallback warning (free ep ${epNum}):`, tokenErr);
++        // If token fetch fails (e.g. episode not reviewed yet), return empty token
++        // VePlayer will still attempt playback with vid + albumId + episodeId
++      }
++
++      res.data({
++        episodeId: ep.id,
++        episodeNumber: ep.episodeNumber,
++        durationSec: ep.durationSec,
++        albumId: drama.albumId || drama.slug,
++        byteplusEpisodeId: ep.byteplusEpisodeId || ep.id,
++        vid: ep.byteplusVid || '',
++        playAuthToken,
++        unlocked: true,
++        type: 'free_preview',
++      });
++      return;
++    }
+ 
+-    // ===== 追加：字幕 Signed URL =====
+-    const subtitleS3Key = `subtitles/en/ep${String(Number(episodeNumber)).padStart(2, '0')}.srt`;
+-    let subtitleUrl: string | null = null;
++    // 检查订阅状态
++    const active = openId ? await hasActiveSubscription(openId) : false;
++    if (!active) {
++      res.status(402).json({
++        error: 'Subscription required',
++        needSubscription: true,
++        tiers: SUBSCRIPTION_TIERS,
++      });
++      return;
++    }
++
++    const episodeId = ep.byteplusEpisodeId || ep.id;
++    let playAuthToken = '';
+     try {
+-      subtitleUrl = await getSignedUrl(
+-        s3,
+-        new GetObjectCommand({
+-          Bucket: process.env.S3_BUCKET || 'mordernmagic-drama-media',
+-          Key: subtitleS3Key,
+-        }),
+-        { expiresIn: 300 }
+-      );
+-    } catch (e) {
+-      console.log('Subtitle not found for key:', subtitleS3Key);
++      playAuthToken = await getPlayAuthToken(episodeId);
++    } catch (tokenErr) {
++      console.warn(`[play-auth] getPlayAuthToken fallback warning (sub ep ${epNum}):`, tokenErr);
+     }
+-    // ===== 追加结束 =====
+ 
+-    res.data({ playUrl, subtitleUrl, subtitleFormat: 'srt', subtitleLang: 'en' });
++    res.data({
++      episodeId: ep.id,
++      episodeNumber: ep.episodeNumber,
++      durationSec: ep.durationSec,
++      albumId: drama.albumId || drama.slug,
++      byteplusEpisodeId: ep.byteplusEpisodeId || ep.id,
++      vid: ep.byteplusVid || '',
++      playAuthToken,
++      unlocked: true,
++      type: 'subscription',
++    });
+   } catch (e: any) {
+     next(e);
+   }
+ });
+ 
++// ============================================================
++// Admin: Sync BytePlus VIDs to database
++// ============================================================
++
++app.post('/api/admin/sync-byteplus-vids', async (req, res, next) => {
++  try {
++    const media = await byteplusGetAllMedia('bigstar-drama');
++    const episodeMap = new Map<number, string>();
++
++    for (const m of media) {
++      const title = m.BasicInfo?.Title || '';
++      const match = title.match(/穿进虐文(\d+)\.mp4/);
++      if (match) {
++        const epNum = parseInt(match[1], 10);
++        const vid = m.BasicInfo?.Vid;
++        if (epNum >= 1 && epNum <= 45 && vid) {
++          episodeMap.set(epNum, vid);
++        }
++      }
++    }
++
++    const dramas = await prisma.drama.findMany({ select: { id: true, slug: true } });
++    if (dramas.length === 0) {
++      res.status(404).json({ error: 'No dramas found' });
++      return;
++    }
++
++    let updated = 0;
++    for (const drama of dramas) {
++      const episodes = await prisma.episode.findMany({
++        where: { dramaId: drama.id },
++        select: { id: true, episodeNumber: true },
++      });
++
++      for (const ep of episodes) {
++        const vid = episodeMap.get(ep.episodeNumber);
++        if (vid) {
++          await prisma.episode.update({
++            where: { id: ep.id },
++            data: { byteplusVid: vid },
++          });
++          updated++;
++        }
++      }
++    }
++
++    res.data({ updated, totalEpisodes: episodeMap.size, dramas: dramas.length });
++  } catch (e: any) {
++    next(e);
++  }
++});
++
++// ===== Error handler (must be last) =====
+ app.use(errorHandler);
+ 
+ const PORT = process.env.PORT || 3000;
+ app.listen(PORT, () => {
+-  console.log(`Server running on port ${PORT}`);
++  console.log(`BIG STAR Drama backend v2.5.0 running on port ${PORT}`);
+ });
+diff --git a/backend/src/tiktok-oauth.ts b/backend/src/tiktok-oauth.ts
+new file mode 100644
+index 0000000..c9e62e0
+--- /dev/null
++++ b/backend/src/tiktok-oauth.ts
+@@ -0,0 +1,229 @@
++/**
++ * TikTok Minis OAuth Token 管理
++ * 封装 fetch / refresh / revoke 操作，带内存缓存
++ *
++ * 端点: POST https://open.tiktokapis.com/v2/oauth/token/
++ * Header: Content-Type: application/x-www-form-urlencoded
++ */
++
++import { PrismaClient } from '@prisma/client';
++
++const TIKTOK_OAUTH_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
++const TIKTOK_REVOKE_URL = 'https://open.tiktokapis.com/v2/oauth/revoke/';
++
++interface TokenResponse {
++  access_token: string;
++  expires_in: number;
++  open_id: string;
++  refresh_expires_in: number;
++  refresh_token: string;
++  scope: string;
++  token_type: string;
++}
++
++interface TokenCacheEntry {
++  accessToken: string;
++  refreshToken: string;
++  expiresAt: number;      // unix timestamp (ms)
++  refreshExpiresAt: number; // unix timestamp (ms)
++  openId: string;
++  scope: string;
++}
++
++// 内存缓存（生产环境建议用 Redis）
++const tokenCache = new Map<string, TokenCacheEntry>();
++
++function getClientCreds(): { clientKey: string; clientSecret: string } {
++  const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
++  const clientSecret = process.env.TIKTOK_CLIENT_SECRET || '';
++  if (!clientKey || !clientSecret) {
++    throw new Error('Missing TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET env vars');
++  }
++  return { clientKey, clientSecret };
++}
++
++/**
++ * 用 authorization_code 换取 access_token + refresh_token
++ */
++export async function fetchAccessToken(code: string): Promise<TokenResponse> {
++  const { clientKey, clientSecret } = getClientCreds();
++
++  const params = new URLSearchParams();
++  params.append('client_key', clientKey);
++  params.append('client_secret', clientSecret);
++  params.append('code', code);
++  params.append('grant_type', 'authorization_code');
++
++  const res = await fetch(TIKTOK_OAUTH_URL, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++    body: params.toString(),
++  });
++
++  const data = await res.json() as any;
++  if (!res.ok || data.error) {
++    throw new Error(`fetchAccessToken failed: ${data.error_description || data.error || res.statusText}`);
++  }
++
++  const result = data as TokenResponse;
++  cacheToken(result.open_id, result);
++  return result;
++}
++
++/**
++ * 用 refresh_token 续期 access_token
++ * ⚠️ 返回的 refresh_token 可能与传入的不同，必须用新的！
++ */
++export async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
++  const { clientKey, clientSecret } = getClientCreds();
++
++  const params = new URLSearchParams();
++  params.append('client_key', clientKey);
++  params.append('client_secret', clientSecret);
++  params.append('grant_type', 'refresh_token');
++  params.append('refresh_token', refreshToken);
++
++  const res = await fetch(TIKTOK_OAUTH_URL, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++    body: params.toString(),
++  });
++
++  const data = await res.json() as any;
++  if (!res.ok || data.error) {
++    throw new Error(`refreshAccessToken failed: ${data.error_description || data.error || res.statusText}`);
++  }
++
++  const result = data as TokenResponse;
++  cacheToken(result.open_id, result);
++  return result;
++}
++
++/**
++ * 吊销 token
++ */
++export async function revokeAccessToken(accessToken: string): Promise<void> {
++  const { clientKey, clientSecret } = getClientCreds();
++
++  const params = new URLSearchParams();
++  params.append('client_key', clientKey);
++  params.append('client_secret', clientSecret);
++  params.append('token', accessToken);
++
++  const res = await fetch(TIKTOK_REVOKE_URL, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++    body: params.toString(),
++  });
++
++  if (!res.ok) {
++    const data = await res.json().catch(() => ({})) as any;
++    throw new Error(`revokeAccessToken failed: ${data.error_description || res.statusText}`);
++  }
++}
++
++/**
++ * 缓存 token 到内存
++ */
++function cacheToken(openId: string, resp: TokenResponse): void {
++  const now = Date.now();
++  tokenCache.set(openId, {
++    accessToken: resp.access_token,
++    refreshToken: resp.refresh_token,
++    expiresAt: now + resp.expires_in * 1000,
++    refreshExpiresAt: now + resp.refresh_expires_in * 1000,
++    openId: resp.open_id,
++    scope: resp.scope,
++  });
++}
++
++/**
++ * 获取有效的 access_token（自动续期）
++ * 优先用内存缓存，失败回退到数据库
++ */
++export async function getValidAccessToken(
++  openId: string,
++  prisma: PrismaClient
++): Promise<string> {
++  const cached = tokenCache.get(openId);
++  const now = Date.now();
++
++  // 缓存有效，直接返回
++  if (cached && cached.expiresAt > now + 60_000) {
++    return cached.accessToken;
++  }
++
++  // 缓存过期或不存在，尝试从数据库读 refresh_token
++  const user = await prisma.user.findUnique({
++    where: { openId },
++    select: { tiktokRefreshToken: true },
++  });
++
++  if (!user?.tiktokRefreshToken) {
++    throw new Error(`No refresh token for openId=${openId}. User needs to login first.`);
++  }
++
++  // refresh token 也过期了
++  if (cached && cached.refreshExpiresAt < now) {
++    throw new Error(`Refresh token expired for openId=${openId}. User needs to re-login.`);
++  }
++
++  // 续期
++  const refreshed = await refreshAccessToken(user.tiktokRefreshToken);
++
++  // 更新数据库（refresh_token 可能变了）
++  await prisma.user.update({
++    where: { openId },
++    data: {
++      tiktokAccessToken: refreshed.access_token,
++      tiktokRefreshToken: refreshed.refresh_token,
++      tiktokTokenExpiresAt: new Date(Date.now() + refreshed.expires_in * 1000),
++    },
++  });
++
++  return refreshed.access_token;
++}
++
++/**
++ * 用 auth_code 完成用户首次登录，写入数据库
++ */
++export async function loginWithAuthCode(
++  code: string,
++  prisma: PrismaClient
++): Promise<{ openId: string; accessToken: string }> {
++  const resp = await fetchAccessToken(code);
++
++  await prisma.user.upsert({
++    where: { openId: resp.open_id },
++    update: {
++      tiktokAccessToken: resp.access_token,
++      tiktokRefreshToken: resp.refresh_token,
++      tiktokTokenExpiresAt: new Date(Date.now() + resp.expires_in * 1000),
++    },
++    create: {
++      openId: resp.open_id,
++      tiktokAccessToken: resp.access_token,
++      tiktokRefreshToken: resp.refresh_token,
++      tiktokTokenExpiresAt: new Date(Date.now() + resp.expires_in * 1000),
++    },
++  });
++
++  return { openId: resp.open_id, accessToken: resp.access_token };
++}
++
++/**
++ * 构造 TikTok OAuth 授权链接（给前端用）
++ */
++export function buildAuthUrl(state: string = 'default'): string {
++  const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
++  const redirectUri = process.env.TIKTOK_REDIRECT_URI || '';
++  if (!clientKey) throw new Error('Missing TIKTOK_CLIENT_KEY');
++
++  const url = new URL('https://www.tiktok.com/auth/authorize/');
++  url.searchParams.set('client_key', clientKey);
++  url.searchParams.set('redirect_uri', redirectUri || 'https://drama.mordernmagic.com/auth/callback');
++  url.searchParams.set('response_type', 'code');
++  url.searchParams.set('scope', 'user.info.basic');
++  url.searchParams.set('state', state);
++  return url.toString();
++}
+diff --git a/backend/src/tiktok-payment.ts b/backend/src/tiktok-payment.ts
+new file mode 100644
+index 0000000..ceeccb4
+--- /dev/null
++++ b/backend/src/tiktok-payment.ts
+@@ -0,0 +1,168 @@
++/**
++ * TikTok Minis Payment APIs 封装
++ * 4 个端点：get_tier_infos / trade_order/create / trade_order/query / check_redeem_amounts
++ *
++ * Base URL: https://open.tiktokapis.com/v2/minis/
++ */
++
++import { PrismaClient } from '@prisma/client';
++import { getValidAccessToken } from './tiktok-oauth';
++
++const BASE_URL = 'https://open.tiktokapis.com/v2/minis';
++
++// ===== 错误码处理 =====
++interface TikTokError {
++  code: string;
++  message: string;
++  log_id: string;
++}
++
++function handleError(error: TikTokError, context: string): never {
++  const code = error.code;
++  const logId = error.log_id;
++
++  // System Error
++  if (code === '50001000') {
++    throw new Error(`[${context}] TikTok Internal Error (50001000). log_id=${logId}. Retry later.`);
++  }
++  // Invalid Param
++  if (code === '40001000') {
++    throw new Error(`[${context}] Invalid Parameters (40001000). log_id=${logId}. Check request params.`);
++  }
++  // Business Errors
++  if (code === '20011002') {
++    throw new Error(`[${context}] Order not existed (20011002). log_id=${logId}. Verify trade_order_id.`);
++  }
++  if (code === '20021001') {
++    throw new Error(`[${context}] Submerchant ID invalid (20021001). log_id=${logId}. Contact TikTok to enable payment.`);
++  }
++  if (code === '20021002') {
++    throw new Error(`[${context}] Outer order ID existed (20021002). log_id=${logId}. Use unique order_id.`);
++  }
++  if (code === '20001003') {
++    throw new Error(`[${context}] Tier ID invalid (20001003). log_id=${logId}. Check tier_id.`);
++  }
++
++  throw new Error(`[${context}] TikTok API error: ${code} - ${error.message}. log_id=${logId}`);
++}
++
++async function tiktokPost(path: string, accessToken: string, body: any): Promise<any> {
++  const res = await fetch(`${BASE_URL}${path}`, {
++    method: 'POST',
++    headers: {
++      'Authorization': `Bearer ${accessToken}`,
++      'Content-Type': 'application/json',
++    },
++    body: JSON.stringify(body),
++  });
++
++  const data = await res.json() as any;
++  if (data.error && data.error.code !== 'ok') {
++    handleError(data.error, path);
++  }
++  return data;
++}
++
++// ===== Tier Info =====
++
++export interface TierInfo {
++  tier_id: string;
++  tier_name: string;
++  token_type: string;
++  token_amount: number;
++  price: string;
++  currency: string;
++  symbol: string;
++}
++
++/**
++ * 获取充值套餐信息
++ */
++export async function getTierInfos(
++  tierIds: string[],
++  openId: string,
++  prisma: PrismaClient
++): Promise<Record<string, TierInfo>> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/utility/get_tier_infos/', accessToken, {
++    token_type: 'BEANS',
++    tier_ids: tierIds,
++  });
++  return data.data?.tier_infos || {};
++}
++
++// ===== Order =====
++
++export interface OrderInfo {
++  order_id: string;
++  order_url?: string;
++  product_name: string;
++  product_id: string;
++  quantity: number;
++  quantity_unit: string;
++  image_url: string;
++}
++
++export interface CreateOrderResult {
++  trade_order_id: string;
++}
++
++/**
++ * 创建支付订单（真正调官方 API）
++ */
++export async function createTradeOrder(
++  tokenAmount: number,
++  orderInfo: OrderInfo,
++  openId: string,
++  prisma: PrismaClient
++): Promise<CreateOrderResult> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/trade_order/create/', accessToken, {
++    token_type: 'BEANS',
++    token_amount: tokenAmount,
++    order_info: orderInfo,
++  });
++  return data.data;
++}
++
++export interface TradeOrderInfo {
++  trade_order_id: string;
++  trade_order_status: 'PENDING' | 'SUCCESS' | 'REFUNDED';
++}
++
++/**
++ * 查询订单状态
++ */
++export async function queryTradeOrder(
++  tradeOrderId: string,
++  openId: string,
++  prisma: PrismaClient
++): Promise<TradeOrderInfo> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/trade_order/query/', accessToken, {
++    trade_order_id: tradeOrderId,
++  });
++  return data.data;
++}
++
++// ===== Check Redeem =====
++
++export interface CheckRedeemResult {
++  valid: boolean;
++}
++
++/**
++ * 验证 Beans 金额合法性
++ */
++export async function checkRedeemAmounts(
++  tokenAmounts: number[],
++  openId: string,
++  prisma: PrismaClient
++): Promise<CheckRedeemResult> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/utility/check_redeem_amounts/', accessToken, {
++    token_type: 'BEANS',
++    token_amounts: tokenAmounts,
++  });
++  return data.data;
++}
+diff --git a/backend/src/tiktok-subscription.ts b/backend/src/tiktok-subscription.ts
+new file mode 100644
+index 0000000..89821ef
+--- /dev/null
++++ b/backend/src/tiktok-subscription.ts
+@@ -0,0 +1,213 @@
++/**
++ * TikTok Minis Subscription APIs 封装
++ * 6 个端点：create / reactivate / get_active_list / get_subscription_info / get_trade_order_info / get_subscription_tier_info
++ *
++ * Base URL: https://open.tiktokapis.com/v2/minis/
++ */
++
++import { PrismaClient } from '@prisma/client';
++import { getValidAccessToken } from './tiktok-oauth';
++
++const BASE_URL = 'https://open.tiktokapis.com/v2/minis';
++
++// ===== 错误码处理（Subscription 特有） =====
++interface TikTokError {
++  code: string;
++  message: string;
++  log_id: string;
++}
++
++function handleError(error: TikTokError, context: string): never {
++  const code = error.code;
++  const logId = error.log_id;
++
++  // System / Invalid Param
++  if (code === '50001000') {
++    throw new Error(`[${context}] TikTok Internal Error (50001000). log_id=${logId}. Retry later.`);
++  }
++  if (code === '40001000') {
++    throw new Error(`[${context}] Invalid Parameters (40001000). log_id=${logId}. Check request params.`);
++  }
++  // Payment shared
++  if (code === '20021001') {
++    throw new Error(`[${context}] Submerchant ID invalid (20021001). log_id=${logId}. Contact TikTok to enable payment.`);
++  }
++  if (code === '20021002') {
++    throw new Error(`[${context}] Outer order ID existed (20021002). log_id=${logId}. Use unique order_id.`);
++  }
++  if (code === '20001003') {
++    throw new Error(`[${context}] Tier ID invalid (20001003). log_id=${logId}. Check tier_id.`);
++  }
++  // Subscription specific
++  if (code === '20021101') {
++    throw new Error(`[${context}] Subscription is active (20021101). log_id=${logId}. Cannot create new subscription.`);
++  }
++  if (code === '20021102') {
++    throw new Error(`[${context}] Subscription is canceled (20021102). log_id=${logId}. Use reactivate instead.`);
++  }
++  if (code === '20021103') {
++    throw new Error(`[${context}] Subscription is on hold (20021103). log_id=${logId}. Guide user to handle current subscription.`);
++  }
++  if (code === '20021108') {
++    throw new Error(`[${context}] Change subscription unfinished (20021108). log_id=${logId}. Wait 1 hour between change requests.`);
++  }
++  if (code === '20021111') {
++    throw new Error(`[${context}] Subscription too close to renewal (20021111). log_id=${logId}. Cannot change within 24h of renewal.`);
++  }
++
++  throw new Error(`[${context}] TikTok API error: ${code} - ${error.message}. log_id=${logId}`);
++}
++
++async function tiktokPost(path: string, accessToken: string, body?: any): Promise<any> {
++  const res = await fetch(`${BASE_URL}${path}`, {
++    method: 'POST',
++    headers: {
++      'Authorization': `Bearer ${accessToken}`,
++      'Content-Type': 'application/json',
++    },
++    body: body ? JSON.stringify(body) : undefined,
++  });
++
++  const data = await res.json() as any;
++  if (data.error && data.error.code !== 'ok') {
++    handleError(data.error, path);
++  }
++  return data;
++}
++
++// ===== Types =====
++
++export interface SubscriptionOrderInfo {
++  order_id: string;
++  product_name: string;
++  order_url?: string;
++  order_detail?: string;
++}
++
++export interface SubscriptionObject {
++  subscription_id: string;
++  tier_id: string;
++  is_subscription_rights_valid: boolean;
++  is_renewal_normal: boolean;
++  trade_order_id: string;
++  begin_time?: number;
++  end_time?: number;
++  next_deduct_time?: number;
++  is_sandbox?: boolean;
++  pay_type?: 'IAP' | 'WEB' | 'ACA';
++}
++
++export interface SubscriptionTierInfo {
++  tier_id: string;
++  deduct_cycle: 'WEEKLY' | 'MONTHLY' | 'BIMONTHLY' | 'QUARTERLY' | 'SEMIANNUALLY' | 'ANNUALLY';
++  deduct_type: 'one_time' | 'auto_renew';
++  price: string;
++  currency: string;
++  symbol: string;
++}
++
++export interface SubscriptionTradeOrderInfo {
++  trade_order_id: string;
++  subscription_id: string;
++  trade_order_status: 'SUCCESS' | 'PENDING' | 'REFUNDED';
++  is_sandbox?: boolean;
++  begin_time?: number;
++  end_time?: number;
++  next_deduct_time?: number;
++  actually_end_time?: number;
++  pay_type?: 'IAP' | 'WEB';
++}
++
++// ===== API Methods =====
++
++/**
++ * 创建订阅
++ */
++export async function createSubscription(
++  tierId: string,
++  orderInfo: SubscriptionOrderInfo,
++  openId: string,
++  prisma: PrismaClient
++): Promise<{ trade_order_id: string }> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/subscription/create/', accessToken, {
++    tier_id: tierId,
++    order_info: orderInfo,
++  });
++  return data.data;
++}
++
++/**
++ * 重新激活订阅
++ */
++export async function reactivateSubscription(
++  subscriptionId: string,
++  orderInfo: SubscriptionOrderInfo,
++  openId: string,
++  prisma: PrismaClient
++): Promise<{ trade_order_id: string }> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/subscription/reactivate/', accessToken, {
++    subscription_id: subscriptionId,
++    order_info: orderInfo,
++  });
++  return data.data;
++}
++
++/**
++ * 获取用户活跃订阅列表
++ */
++export async function getActiveSubscriptions(
++  openId: string,
++  prisma: PrismaClient
++): Promise<SubscriptionObject[]> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/subscription/get_active_list/', accessToken);
++  return data.data?.subscriptions || [];
++}
++
++/**
++ * 按 trade_order_id 查询订阅详情
++ */
++export async function getSubscriptionInfo(
++  tradeOrderId: string,
++  openId: string,
++  prisma: PrismaClient
++): Promise<SubscriptionObject> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/subscription/get_subscription_info/', accessToken, {
++    trade_order_id: tradeOrderId,
++  });
++  return data.data?.subscription;
++}
++
++/**
++ * 按 trade_order_id 查询交易详情
++ */
++export async function getSubscriptionTradeOrderInfo(
++  tradeOrderId: string,
++  openId: string,
++  prisma: PrismaClient
++): Promise<SubscriptionTradeOrderInfo> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const data = await tiktokPost('/subscription/get_trade_order_info/', accessToken, {
++    trade_order_id: tradeOrderId,
++  });
++  return data.data;
++}
++
++/**
++ * 获取订阅套餐信息
++ */
++export async function getSubscriptionTierInfo(
++  tierIds: string[],
++  openId: string,
++  prisma: PrismaClient,
++  devicePlatform?: 'android' | 'iphone'
++): Promise<Record<string, SubscriptionTierInfo>> {
++  const accessToken = await getValidAccessToken(openId, prisma);
++  const body: any = { tier_ids: tierIds };
++  if (devicePlatform) body.device_platform = devicePlatform;
++  const data = await tiktokPost('/subscription/get_subscription_tier_info/', accessToken, body);
++  return data.data?.subscription_tiers_info || {};
++}
+diff --git a/backend/src/webhook/prisma-adapter.ts b/backend/src/webhook/prisma-adapter.ts
+new file mode 100644
+index 0000000..a80cc4e
+--- /dev/null
++++ b/backend/src/webhook/prisma-adapter.ts
+@@ -0,0 +1,92 @@
++/**
++ * Prisma 数据库适配器实现
++ * 完全实现 WebhookDatabaseAdapter 接口，可直接用于 createTikTokWebhookRouter
++ *
++ * 前置条件：
++ *   1. prisma-schema-extension.prisma 中的 model 已合并到 schema.prisma
++ *   2. 已执行 npx prisma generate（或 npx prisma migrate dev）
++ *   3. PrismaClient 已正常初始化
++ */
++
++import { PrismaClient } from '@prisma/client';
++import type { WebhookDatabaseAdapter } from './types';
++
++export interface PrismaAdapterOptions {
++  prisma: PrismaClient;
++}
++
++/**
++ * 创建基于 Prisma 的数据库适配器
++ *
++ * 使用示例：
++ *   import { PrismaClient } from '@prisma/client';
++ *   import { createPrismaAdapter } from './webhook/prisma-adapter';
++ *   import { createTikTokWebhookRouter } from './webhook/tiktok';
++ *
++ *   const prisma = new PrismaClient();
++ *   const dbAdapter = createPrismaAdapter({ prisma });
++ *
++ *   app.use('/webhook', createTikTokWebhookRouter({
++ *     signature: { secret: process.env.TIKTOK_WEBHOOK_SECRET! },
++ *     db: dbAdapter,
++ *   }));
++ */
++export function createPrismaAdapter(opts: PrismaAdapterOptions): WebhookDatabaseAdapter {
++  const { prisma } = opts;
++
++  return {
++    // ============================================================
++    // 1. 幂等检查
++    // ============================================================
++    async isEventProcessed(eventId: string): Promise<boolean> {
++      const existing = await prisma.webhookEvent.findUnique({
++        where: { eventId },
++        select: { id: true },
++      });
++      return !!existing;
++    },
++
++    async markEventProcessed(eventId: string, eventType: string, payload: string): Promise<void> {
++      await prisma.webhookEvent.create({
++        data: {
++          eventId,
++          eventType,
++          payload,
++        },
++      });
++    },
++
++    // ============================================================
++    // 2. 订阅处理（trade_order 已彻底移除）
++    // ============================================================
++    async upsertSubscription(sub): Promise<void> {
++      await prisma.minisSubscription.upsert({
++        where: { subscriptionId: sub.subscriptionId },
++        create: {
++          subscriptionId: sub.subscriptionId,
++          openId: sub.openId,
++          skuId: sub.skuId,
++          orderId: sub.orderId || null,
++          status: sub.status,
++          startTime: sub.startTime,
++          expireTime: sub.expireTime,
++          autoRenew: sub.autoRenew,
++          nextRenewTime: sub.nextRenewTime,
++          cancelReason: sub.cancelReason,
++        },
++        update: {
++          openId: sub.openId,
++          skuId: sub.skuId,
++          orderId: sub.orderId || undefined,
++          status: sub.status,
++          startTime: sub.startTime,
++          expireTime: sub.expireTime,
++          autoRenew: sub.autoRenew,
++          nextRenewTime: sub.nextRenewTime,
++          cancelReason: sub.cancelReason,
++        },
++      });
++    },
++
++  };
++}
+diff --git a/backend/src/webhook/service.ts b/backend/src/webhook/service.ts
+new file mode 100644
+index 0000000..df3081d
+--- /dev/null
++++ b/backend/src/webhook/service.ts
+@@ -0,0 +1,161 @@
++/**
++ * TikTok Minis Webhook 业务处理服务
++ * 仅处理 subscription 事件（trade_order 已在 v2.5.0 彻底移除）
++ */
++
++import { WebhookDatabaseAdapter, TikTokWebhookPayload } from './types';
++
++interface WebhookServiceConfig {
++  db: WebhookDatabaseAdapter;
++  verbose?: boolean;
++}
++
++export class WebhookService {
++  private db: WebhookDatabaseAdapter;
++  private verbose: boolean;
++
++  constructor(config: WebhookServiceConfig) {
++    this.db = config.db;
++    this.verbose = config.verbose || false;
++  }
++
++  async handleEvent(payload: TikTokWebhookPayload): Promise<void> {
++    const eventType = payload.event_type || (payload as any).event;
++    const eventId = String(payload.event_id || (payload as any).create_time || (payload as any).timestamp);
++
++    if (!eventType || !eventId) {
++      throw new Error('Missing event_type or event_id in payload');
++    }
++
++    // 幂等检查
++    const alreadyProcessed = await this.db.isEventProcessed(eventId);
++    if (alreadyProcessed) {
++      if (this.verbose) console.log(`[WebhookService] Event ${eventId} already processed, skipping`);
++      return;
++    }
++
++    // 记录事件
++    await this.db.markEventProcessed(eventId, eventType, JSON.stringify(payload));
++
++    // 按事件类型分发（仅保留 subscription 事件，trade_order 已彻底移除）
++    switch (eventType) {
++      case 'subscription.created':
++      case 'subscription.activated':
++        await this.handleSubscriptionCreated(payload);
++        break;
++      case 'subscription.renewed':
++        await this.handleSubscriptionRenewed(payload);
++        break;
++      case 'subscription.cancelled':
++        await this.handleSubscriptionCancelled(payload);
++        break;
++      case 'subscription.expired':
++        await this.handleSubscriptionExpired(payload);
++        break;
++      case 'tiktok.ping':
++        if (this.verbose) console.log('[WebhookService] Received ping event');
++        break;
++      default:
++        if (this.verbose) console.log(`[WebhookService] Unhandled event type: ${eventType}`);
++    }
++  }
++
++  private async handleSubscriptionCreated(payload: TikTokWebhookPayload): Promise<void> {
++    const data = payload.data || payload;
++    const sub = {
++      subscriptionId: data.subscription_id || '',
++      openId: data.open_id || '',
++      skuId: data.tier_id || data.sku_id || '',
++      status: 'active',
++      startTime: data.begin_time ? new Date(data.begin_time) : new Date(),
++      expireTime: data.end_time ? new Date(data.end_time) : null,
++      autoRenew: data.is_renewal_normal !== false,
++      nextRenewTime: data.next_deduct_time ? new Date(data.next_deduct_time) : null,
++      cancelReason: null,
++    };
++
++    if (!sub.subscriptionId || !sub.openId) {
++      console.error('[WebhookService] handleSubscriptionCreated: missing subscriptionId or openId', data);
++      return;
++    }
++
++    await this.db.upsertSubscription(sub);
++
++    if (this.verbose) console.log(`[WebhookService] Subscription created: ${sub.subscriptionId}`);
++  }
++
++  private async handleSubscriptionRenewed(payload: TikTokWebhookPayload): Promise<void> {
++    const data = payload.data || payload;
++    const sub = {
++      subscriptionId: data.subscription_id || '',
++      openId: data.open_id || '',
++      skuId: data.tier_id || data.sku_id || '',
++      status: 'active',
++      startTime: data.begin_time ? new Date(data.begin_time) : null,
++      expireTime: data.end_time ? new Date(data.end_time) : null,
++      autoRenew: data.is_renewal_normal !== false,
++      nextRenewTime: data.next_deduct_time ? new Date(data.next_deduct_time) : null,
++      cancelReason: null,
++    };
++
++    if (!sub.subscriptionId) {
++      console.error('[WebhookService] handleSubscriptionRenewed: missing subscriptionId', data);
++      return;
++    }
++
++    await this.db.upsertSubscription(sub);
++    if (this.verbose) console.log(`[WebhookService] Subscription renewed: ${sub.subscriptionId}`);
++  }
++
++  private async handleSubscriptionCancelled(payload: TikTokWebhookPayload): Promise<void> {
++    const data = payload.data || payload;
++    const subId = data.subscription_id || '';
++    const openId = data.open_id || '';
++    const skuId = data.tier_id || data.sku_id || '';
++
++    if (!subId) {
++      console.error('[WebhookService] handleSubscriptionCancelled: missing subscriptionId', data);
++      return;
++    }
++
++    await this.db.upsertSubscription({
++      subscriptionId: subId,
++      openId,
++      skuId,
++      status: 'cancelled',
++      startTime: null,
++      expireTime: data.actually_end_time ? new Date(data.actually_end_time) : null,
++      autoRenew: false,
++      nextRenewTime: null,
++      cancelReason: data.cancel_reason || 'user_cancelled',
++    });
++
++    if (this.verbose) console.log(`[WebhookService] Subscription cancelled: ${subId}`);
++  }
++
++  private async handleSubscriptionExpired(payload: TikTokWebhookPayload): Promise<void> {
++    const data = payload.data || payload;
++    const subId = data.subscription_id || '';
++    const openId = data.open_id || '';
++    const skuId = data.tier_id || data.sku_id || '';
++
++    if (!subId) {
++      console.error('[WebhookService] handleSubscriptionExpired: missing subscriptionId', data);
++      return;
++    }
++
++    await this.db.upsertSubscription({
++      subscriptionId: subId,
++      openId,
++      skuId,
++      status: 'expired',
++      startTime: null,
++      expireTime: new Date(),
++      autoRenew: false,
++      nextRenewTime: null,
++      cancelReason: 'expired',
++    });
++
++    if (this.verbose) console.log(`[WebhookService] Subscription expired: ${subId}`);
++  }
++}
+diff --git a/backend/src/webhook/signature.ts b/backend/src/webhook/signature.ts
+new file mode 100644
+index 0000000..8e8f061
+--- /dev/null
++++ b/backend/src/webhook/signature.ts
+@@ -0,0 +1,105 @@
++/**
++ * TikTok Minis Webhook 签名验证
++ * 正确算法: HMAC-SHA256(secret, timestamp + "." + rawBody)
++ */
++
++import crypto from 'crypto';
++import { SignatureConfig } from './types';
++
++export class WebhookSignatureError extends Error {
++  constructor(message: string) {
++    super(message);
++    this.name = 'WebhookSignatureError';
++  }
++}
++
++/**
++ * 验证 webhook 签名
++ */
++export function verifyWebhookSignature(
++  rawBody: Buffer,
++  headers: Record<string, string | string[] | undefined>,
++  config: SignatureConfig
++): void {
++  const headerValue = headers[config.headerName.toLowerCase()];
++  if (!headerValue) {
++    throw new WebhookSignatureError(`Missing signature header: ${config.headerName}`);
++  }
++
++  const signatureStr = Array.isArray(headerValue) ? headerValue[0] : headerValue;
++  const match = String(signatureStr).match(/t=(\d+),s=([a-f0-9]+)/i);
++  if (!match) {
++    throw new WebhookSignatureError(`Invalid ${config.headerName} format`);
++  }
++
++  const timestamp = match[1];
++  const signature = match[2];
++
++  // 时间戳防重放
++  if (config.checkTimestamp !== false) {
++    const ts = parseInt(timestamp, 10);
++    const now = Math.floor(Date.now() / 1000);
++    const tolerance = config.timestampTolerance || 300;
++    if (Math.abs(now - ts) > tolerance) {
++      throw new WebhookSignatureError(`Timestamp out of tolerance: ${ts} vs ${now}`);
++    }
++  }
++
++  const bodyStr = rawBody.toString('utf8');
++  let expected: string;
++
++  if (config.algorithm === 'tiktok-minis') {
++    expected = crypto
++      .createHmac('sha256', config.secret)
++      .update(timestamp + '.' + bodyStr)
++      .digest('hex');
++  } else {
++    expected = crypto
++      .createHmac('sha256', config.secret)
++      .update(bodyStr)
++      .digest('hex');
++  }
++
++  if (!crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'))) {
++    throw new WebhookSignatureError('Signature mismatch');
++  }
++}
++
++/**
++ * 调试模式：尝试所有已知算法变体
++ */
++export function tryAllSignatureAlgorithms(
++  rawBody: Buffer,
++  headers: Record<string, string | string[] | undefined>,
++  secret: string,
++  _clientKey: string,
++  headerName: string
++): Array<{ algorithm: string; matched: boolean }> {
++  const headerValue = headers[headerName.toLowerCase()];
++  if (!headerValue) return [];
++
++  const signatureStr = Array.isArray(headerValue) ? headerValue[0] : headerValue;
++  const match = String(signatureStr).match(/t=(\d+),s=([a-f0-9]+)/i);
++  if (!match) return [];
++
++  const timestamp = match[1];
++  const signature = match[2];
++  const bodyStr = rawBody.toString('utf8');
++
++  const algorithms = [
++    { name: 'hmac-sha256(body)', fn: () => crypto.createHmac('sha256', secret).update(bodyStr).digest('hex') },
++    { name: 'hmac-sha256(timestamp+body)', fn: () => crypto.createHmac('sha256', secret).update(timestamp + bodyStr).digest('hex') },
++    { name: 'hmac-sha256(timestamp+"."+body)', fn: () => crypto.createHmac('sha256', secret).update(timestamp + '.' + bodyStr).digest('hex') },
++    { name: 'hmac-sha256(timestamp+":"+body)', fn: () => crypto.createHmac('sha256', secret).update(timestamp + ':' + bodyStr).digest('hex') },
++    { name: 'sha256(secret+body)', fn: () => crypto.createHash('sha256').update(secret + bodyStr).digest('hex') },
++  ];
++
++  return algorithms.map(a => {
++    const expected = a.fn();
++    let matched = false;
++    try {
++      matched = crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'));
++    } catch { /* length mismatch */ }
++    return { algorithm: a.name, matched };
++  });
++}
+diff --git a/backend/src/webhook/tiktok.ts b/backend/src/webhook/tiktok.ts
+new file mode 100644
+index 0000000..a776fab
+--- /dev/null
++++ b/backend/src/webhook/tiktok.ts
+@@ -0,0 +1,110 @@
++/**
++ * TikTok Minis Webhook Express 路由
++ * 挂载点：POST /webhook/tiktok
++ *
++ * 使用方式：
++ *   import { createTikTokWebhookRouter } from './webhook/tiktok';
++ *   app.use('/webhook', createTikTokWebhookRouter(config));
++ */
++
++import { Router, type Request, type Response, type NextFunction } from 'express';
++import { verifyWebhookSignature, WebhookSignatureError, tryAllSignatureAlgorithms } from './signature';
++import { WebhookService } from './service';
++import type { WebhookHandlerConfig, TikTokWebhookPayload } from './types';
++
++/**
++ * 创建 TikTok Webhook 路由
++ * @param config Webhook 处理器配置
++ * @returns Express Router
++ */
++export function createTikTokWebhookRouter(config: WebhookHandlerConfig): Router {
++  const router = Router();
++  const service = new WebhookService({ db: config.db, verbose: config.verbose });
++
++  // 必须使用 raw body 才能正确验签（JSON parser 会改变 body 格式）
++  // 在挂载此路由前，确保该路径不使用 express.json() 中间件
++  router.post('/tiktok', async (req: Request, res: Response, _next: NextFunction) => {
++    const rawBody = req.body as Buffer;
++
++    // 安全校验 1：必须是 Buffer（原始字节）
++    if (!Buffer.isBuffer(rawBody)) {
++      console.error('[TikTokWebhook] req.body is not a Buffer. Make sure you use express.raw({ type: "application/json" }) before this router.');
++      res.status(400).json({ error: 'Invalid body format' });
++      return;
++    }
++
++    try {
++      verifyWebhookSignature(rawBody, req.headers as Record<string, string | string[] | undefined>, config.signature);
++    } catch (err) {
++      if (err instanceof WebhookSignatureError) {
++        console.warn('[TikTokWebhook] Signature verification failed:', err.message);
++        const attempts = tryAllSignatureAlgorithms(rawBody, req.headers as Record<string, string | string[] | undefined>, config.signature.secret, config.signature.clientKey, config.signature.headerName);
++        for (const a of attempts) { console.log(`[TikTokWebhook]   ${a.algorithm}: matched=${a.matched}`); }
++        res.status(401).json({ error: 'Unauthorized', message: err.message });
++        return;
++      }
++      throw err;
++    }
++
++    // 安全校验 3：解析 JSON
++    let payload: TikTokWebhookPayload;
++    try {
++      payload = JSON.parse(rawBody.toString('utf8')) as TikTokWebhookPayload;
++    } catch (parseErr) {
++      console.error('[TikTokWebhook] JSON parse error:', parseErr);
++      console.error('[TikTokWebhook] Body preview:', rawBody.toString('utf8').slice(0, 500));
++      res.status(400).json({ error: 'Invalid JSON' });
++      return;
++    }
++
++    // 安全校验 4：字段基本校验（兼容 TikTok 的字段命名：event / event_type）
++    const eventType = payload.event_type || (payload as any).event;
++    const eventId = payload.event_id || (payload as any).create_time || (payload as any).timestamp;
++    if (!eventType || !eventId) {
++      console.error('[TikTokWebhook] Missing fields. Payload keys:', Object.keys(payload));
++      res.status(400).json({ error: 'Missing event_type/event or event_id' });
++      return;
++    }
++    // 统一字段名，方便后续处理
++    (payload as any).event_type = eventType;
++    (payload as any).event_id = eventId;
++
++    // 检查是否有自定义处理器
++    const eventTypeStr = payload.event_type || (payload as any).event || '';
++    const customHandler = eventTypeStr && config.customHandlers ? config.customHandlers[eventTypeStr] : undefined;
++    if (customHandler) {
++      try {
++        await customHandler(payload);
++      } catch (err) {
++        console.error('[TikTokWebhook] Custom handler error:', err);
++        // 自定义处理器出错也返回 200，避免 TikTok 重试导致副作用
++        // 但记录错误供排查
++      }
++      res.status(200).send('OK');
++      return;
++    }
++
++    // 默认业务处理
++    try {
++      await service.handleEvent(payload);
++      res.status(200).send('OK');
++    } catch (err) {
++      console.error('[TikTokWebhook] Business processing error:', err);
++      // 业务处理出错也返回 200，因为幂等检查保证重试不会重复发货
++      // 但把错误记到日志，供人工排查
++      res.status(200).send('OK');
++    }
++  });
++
++  return router;
++}
++
++// 导出子模块，方便用户按需使用
++export { verifyWebhookSignature, WebhookSignatureError } from './signature';
++export { WebhookService } from './service';
++export type {
++  TikTokWebhookPayload,
++  SignatureConfig,
++  WebhookDatabaseAdapter,
++  WebhookHandlerConfig,
++} from './types';
+diff --git a/backend/src/webhook/types.ts b/backend/src/webhook/types.ts
+new file mode 100644
+index 0000000..367d6c8
+--- /dev/null
++++ b/backend/src/webhook/types.ts
+@@ -0,0 +1,47 @@
++/**
++ * TikTok Minis Webhook 类型定义
++ */
++
++export interface SignatureConfig {
++  secret: string;
++  clientKey: string;
++  headerName: string;
++  algorithm: 'tiktok-minis' | string;
++  checkTimestamp?: boolean;
++  timestampTolerance?: number;
++}
++
++export interface WebhookDatabaseAdapter {
++  isEventProcessed(eventId: string): Promise<boolean>;
++  markEventProcessed(eventId: string, eventType: string, payload: string): Promise<void>;
++  upsertSubscription(sub: MinisSubscription): Promise<void>;
++}
++
++export interface WebhookHandlerConfig {
++  signature: SignatureConfig;
++  db: WebhookDatabaseAdapter;
++  verbose?: boolean;
++  customHandlers?: Record<string, (payload: TikTokWebhookPayload) => Promise<void>>;
++}
++
++export interface TikTokWebhookPayload {
++  event_type?: string;
++  event?: string;
++  event_id?: string | number;
++  create_time?: string | number;
++  timestamp?: string | number;
++  [key: string]: any;
++}
++
++export interface MinisSubscription {
++  subscriptionId: string;
++  openId: string;
++  skuId: string;
++  orderId?: string | null;
++  status: string;
++  startTime?: Date | null;
++  expireTime?: Date | null;
++  autoRenew?: boolean;
++  nextRenewTime?: Date | null;
++  cancelReason?: string | null;
++}
+diff --git a/backend/tsconfig.json b/backend/tsconfig.json
+new file mode 100644
+index 0000000..2122cb1
+--- /dev/null
++++ b/backend/tsconfig.json
+@@ -0,0 +1,19 @@
++{
++  "compilerOptions": {
++    "target": "ES2022",
++    "module": "commonjs",
++    "lib": ["ES2022"],
++    "outDir": "./build",
++    "rootDir": "./src",
++    "strict": true,
++    "esModuleInterop": true,
++    "skipLibCheck": true,
++    "forceConsistentCasingInFileNames": true,
++    "resolveJsonModule": true,
++    "declaration": true,
++    "declarationMap": true,
++    "sourceMap": true
++  },
++  "include": ["src/**/*"],
++  "exclude": ["node_modules", "dist"]
++}
