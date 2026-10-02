@@ -26,26 +26,34 @@ const resend = new Resend(process.env.RESEND_API_KEY || '');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://drama.mordernmagic.com';
-const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
-const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
+const TIKTOK_CLIENT_KEY_DRAMAFLIX = process.env.TIKTOK_CLIENT_KEY_DRAMAFLIX || process.env.TIKTOK_CLIENT_KEY || '';
+const TIKTOK_CLIENT_SECRET_DRAMAFLIX = process.env.TIKTOK_CLIENT_SECRET_DRAMAFLIX || process.env.TIKTOK_CLIENT_SECRET || '';
+const TIKTOK_CLIENT_KEY_BIGSTAR = process.env.TIKTOK_CLIENT_KEY_BIGSTAR || '';
+const TIKTOK_CLIENT_SECRET_BIGSTAR = process.env.TIKTOK_CLIENT_SECRET_BIGSTAR || '';
 
-/**
- * App-level access token cache (Client Credentials flow)
- * Used for TikTok Open API server-to-server calls (e.g. play_token)
- */
-let appAccessTokenCache: { token: string; expiresAt: number } | null = null;
+function getTikTokCreds(slug: string): { clientKey: string; clientSecret: string } {
+  if (slug === 'bigstar-drama') {
+    if (!TIKTOK_CLIENT_KEY_BIGSTAR || !TIKTOK_CLIENT_SECRET_BIGSTAR) {
+      throw new Error('Missing TIKTOK_CLIENT_KEY_BIGSTAR or TIKTOK_CLIENT_SECRET_BIGSTAR env vars');
+    }
+    return { clientKey: TIKTOK_CLIENT_KEY_BIGSTAR, clientSecret: TIKTOK_CLIENT_SECRET_BIGSTAR };
+  }
+  if (!TIKTOK_CLIENT_KEY_DRAMAFLIX || !TIKTOK_CLIENT_SECRET_DRAMAFLIX) {
+    throw new Error('Missing TIKTOK_CLIENT_KEY_DRAMAFLIX or TIKTOK_CLIENT_SECRET_DRAMAFLIX env vars');
+  }
+  return { clientKey: TIKTOK_CLIENT_KEY_DRAMAFLIX, clientSecret: TIKTOK_CLIENT_SECRET_DRAMAFLIX };
+}
 
-async function getAppAccessToken(): Promise<string> {
-  if (appAccessTokenCache && appAccessTokenCache.expiresAt > Date.now() + 60_000) {
-    return appAccessTokenCache.token;
-  }
-  if (!TIKTOK_CLIENT_KEY || !TIKTOK_CLIENT_SECRET) {
-    throw new Error('Missing TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET env vars');
-  }
+const appAccessTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+async function getAppAccessToken(slug: string): Promise<string> {
+  const { clientKey, clientSecret } = getTikTokCreds(slug);
+  const cached = appAccessTokenCache.get(clientKey);
+  if (cached && cached.expiresAt > Date.now() + 60000) return cached.token;
 
   const params = new URLSearchParams();
-  params.append('client_key', TIKTOK_CLIENT_KEY);
-  params.append('client_secret', TIKTOK_CLIENT_SECRET);
+  params.append('client_key', clientKey);
+  params.append('client_secret', clientSecret);
   params.append('grant_type', 'client_credentials');
 
   const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
@@ -59,10 +67,10 @@ async function getAppAccessToken(): Promise<string> {
     throw new Error(`getAppAccessToken failed: ${data.error_description || data.error || res.statusText}`);
   }
 
-  appAccessTokenCache = {
+  appAccessTokenCache.set(clientKey, {
     token: data.access_token,
     expiresAt: Date.now() + (data.expires_in || 7200) * 1000,
-  };
+  });
   return data.access_token;
 }
 
@@ -71,11 +79,12 @@ async function getAppAccessToken(): Promise<string> {
  * Endpoint: GET /v2/sg/shortdrama/play_token/?client_key=...&episode_id=...
  * Requires app-level access_token.
  */
-async function getPlayAuthToken(episodeId: string): Promise<string> {
-  const accessToken = await getAppAccessToken();
+async function getPlayAuthToken(slug: string, episodeId: string): Promise<string> {
+  const accessToken = await getAppAccessToken(slug);
+  const { clientKey } = getTikTokCreds(slug);
 
   const url = new URL('https://open.tiktokapis.com/v2/sg/shortdrama/play_token/');
-  url.searchParams.set('client_key', TIKTOK_CLIENT_KEY);
+  url.searchParams.set('client_key', clientKey);
   url.searchParams.set('episode_id', episodeId);
 
   const res = await fetch(url.toString(), {
@@ -769,7 +778,7 @@ app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res,
       const episodeId = ep.byteplusEpisodeId || ep.id;
       let playAuthToken = '';
       try {
-        playAuthToken = await getPlayAuthToken(episodeId);
+        playAuthToken = await getPlayAuthToken(slug, episodeId);
       } catch (tokenErr) {
         console.warn(`[play-auth] getPlayAuthToken fallback warning (free ep ${epNum}):`, tokenErr);
         // If token fetch fails (e.g. episode not reviewed yet), return empty token
@@ -804,7 +813,7 @@ app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res,
     const episodeId = ep.byteplusEpisodeId || ep.id;
     let playAuthToken = '';
     try {
-      playAuthToken = await getPlayAuthToken(episodeId);
+      playAuthToken = await getPlayAuthToken(slug, episodeId);
     } catch (tokenErr) {
       console.warn(`[play-auth] getPlayAuthToken fallback warning (sub ep ${epNum}):`, tokenErr);
     }

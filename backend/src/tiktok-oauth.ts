@@ -34,8 +34,8 @@ interface TokenCacheEntry {
 const tokenCache = new Map<string, TokenCacheEntry>();
 
 function getClientCreds(): { clientKey: string; clientSecret: string } {
-  const clientKey = process.env.TIKTOK_CLIENT_KEY || '';
-  const clientSecret = process.env.TIKTOK_CLIENT_SECRET || '';
+  const clientKey = process.env.TIKTOK_CLIENT_KEY_DRAMAFLIX || process.env.TIKTOK_CLIENT_KEY || '';
+  const clientSecret = process.env.TIKTOK_CLIENT_SECRET_DRAMAFLIX || process.env.TIKTOK_CLIENT_SECRET || '';
   if (!clientKey || !clientSecret) {
     throw new Error('Missing TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET env vars');
   }
