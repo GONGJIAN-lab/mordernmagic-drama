@@ -31,6 +31,11 @@ const TIKTOK_CLIENT_SECRET_DRAMAFLIX = process.env.TIKTOK_CLIENT_SECRET_DRAMAFLI
 const TIKTOK_CLIENT_KEY_BIGSTAR = process.env.TIKTOK_CLIENT_KEY_BIGSTAR || '';
 const TIKTOK_CLIENT_SECRET_BIGSTAR = process.env.TIKTOK_CLIENT_SECRET_BIGSTAR || '';
 
+/**
+ * 根据 drama slug 选择对应的 TikTok Mini App 凭据
+ * - DramaFlix: slug === 'dramaflix' (or fallback)
+ * - BIG STAR Drama: slug === 'bigstar-drama'
+ */
 function getTikTokCreds(slug: string): { clientKey: string; clientSecret: string } {
   if (slug === 'bigstar-drama') {
     if (!TIKTOK_CLIENT_KEY_BIGSTAR || !TIKTOK_CLIENT_SECRET_BIGSTAR) {
@@ -38,18 +43,26 @@ function getTikTokCreds(slug: string): { clientKey: string; clientSecret: string
     }
     return { clientKey: TIKTOK_CLIENT_KEY_BIGSTAR, clientSecret: TIKTOK_CLIENT_SECRET_BIGSTAR };
   }
+  // 默认 DramaFlix
   if (!TIKTOK_CLIENT_KEY_DRAMAFLIX || !TIKTOK_CLIENT_SECRET_DRAMAFLIX) {
     throw new Error('Missing TIKTOK_CLIENT_KEY_DRAMAFLIX or TIKTOK_CLIENT_SECRET_DRAMAFLIX env vars');
   }
   return { clientKey: TIKTOK_CLIENT_KEY_DRAMAFLIX, clientSecret: TIKTOK_CLIENT_SECRET_DRAMAFLIX };
 }
 
+/**
+ * App-level access token cache (Client Credentials flow)
+ * Cache keyed by clientKey to support multi-app (DramaFlix + BIG STAR Drama)
+ */
 const appAccessTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 async function getAppAccessToken(slug: string): Promise<string> {
   const { clientKey, clientSecret } = getTikTokCreds(slug);
+
   const cached = appAccessTokenCache.get(clientKey);
-  if (cached && cached.expiresAt > Date.now() + 60000) return cached.token;
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return cached.token;
+  }
 
   const params = new URLSearchParams();
   params.append('client_key', clientKey);
@@ -757,8 +770,19 @@ app.post('/api/watch-history', requireAuth, async (req: AuthenticatedRequest, re
 app.post('/api/dramas/:slug/episodes/:episodeNumber/play-auth', async (req, res, next) => {
   try {
     const { slug, episodeNumber } = req.params;
-    const { openId } = req.body;
+    let { openId } = req.body;
     const epNum = Number(episodeNumber);
+
+    // 若 body 未传 openId，尝试从 JWT Authorization header 解析
+    if (!openId && req.headers.authorization?.startsWith('Bearer ')) {
+      try {
+        const token = req.headers.authorization.slice(7);
+        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; openId?: string };
+        openId = decoded.openId || decoded.userId;
+      } catch {
+        // ignore invalid token — 未登录用户走免费/未订阅逻辑
+      }
+    }
 
     const drama = await prisma.drama.findUnique({
       where: { slug },
@@ -891,5 +915,5 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`BIG STAR Drama backend v2.5.0 running on port ${PORT}`);
+  console.log(`BIG STAR Drama backend v2.6.0 running on port ${PORT}`);
 });

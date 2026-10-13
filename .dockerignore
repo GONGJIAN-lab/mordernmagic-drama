@@ -1,0 +1,11 @@
+# flyctl launch added from .gitignore
+**/node_modules
+**/build
+**/.env
+**/.env.local
+**/backend/scripts/trigger-hls-transcode-v5.mjs
+
+# flyctl launch added from venv/.gitignore
+# Created by venv; see https://docs.python.org/3/library/venv.html
+venv/**/*
+fly.toml
